@@ -1,0 +1,202 @@
+import { randomUUID } from 'node:crypto';
+import { ApiError } from '../lib/api-error.js';
+import { supabaseAdmin } from '../lib/supabase.js';
+import { listActiveMembershipsByApartmentId } from './membership-service.js';
+function toUuid(id) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id ?? '')
+        ? id
+        : randomUUID();
+}
+async function loadMembershipMaps(apartmentId) {
+    const rows = await listActiveMembershipsByApartmentId(apartmentId);
+    return {
+        accountToMembership: new Map(rows.map((row) => [row.account_id, row.id])),
+        membershipToAccount: new Map(rows.map((row) => [row.id, row.account_id])),
+    };
+}
+function requireMembershipId(map, accountId, contextLabel) {
+    const membershipId = map.get(accountId);
+    if (!membershipId) {
+        throw new ApiError(400, `No active apartment membership was found for ${contextLabel}.`);
+    }
+    return membershipId;
+}
+function mapAttachment(row) {
+    return {
+        id: row.id,
+        name: row.file_name,
+        type: row.file_type,
+        size: row.file_size,
+        url: row.file_url,
+    };
+}
+function mapTicket(row, attachments, membershipToAccount) {
+    return {
+        id: row.id,
+        apartmentId: row.apartment_id,
+        title: row.title,
+        description: row.description,
+        category: row.category,
+        status: row.status,
+        createdByAccountId: membershipToAccount.get(row.created_by_membership_id) ?? 0,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        attachments: attachments.map(mapAttachment),
+    };
+}
+function mapComment(row, membershipToAccount) {
+    return {
+        id: row.id,
+        ticketId: row.ticket_id,
+        accountId: membershipToAccount.get(row.membership_id) ?? 0,
+        text: row.comment_text,
+        createdAt: row.created_at,
+    };
+}
+export async function listTicketsByApartmentId(apartmentId) {
+    const { membershipToAccount } = await loadMembershipMaps(apartmentId);
+    const { data, error } = await supabaseAdmin
+        .from('maintenance_tickets')
+        .select('*')
+        .eq('apartment_id', apartmentId)
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false });
+    if (error)
+        throw new Error(`Failed to load tickets: ${error.message}`);
+    const rows = (data ?? []);
+    if (!rows.length)
+        return [];
+    const ticketIds = rows.map((row) => row.id);
+    const { data: attachmentData, error: attachmentError } = await supabaseAdmin
+        .from('ticket_attachments')
+        .select('*')
+        .in('ticket_id', ticketIds);
+    if (attachmentError)
+        throw new Error(`Failed to load ticket attachments: ${attachmentError.message}`);
+    const attachments = (attachmentData ?? []);
+    return rows.map((row) => mapTicket(row, attachments.filter((attachment) => attachment.ticket_id === row.id), membershipToAccount));
+}
+export async function listTicketCommentsByApartmentId(apartmentId) {
+    const { membershipToAccount } = await loadMembershipMaps(apartmentId);
+    const { data: ticketsData, error: ticketsError } = await supabaseAdmin
+        .from('maintenance_tickets')
+        .select('id')
+        .eq('apartment_id', apartmentId);
+    if (ticketsError)
+        throw new Error(`Failed to load ticket ids: ${ticketsError.message}`);
+    const ticketIds = (ticketsData ?? []).map((row) => row.id);
+    if (!ticketIds.length)
+        return [];
+    const { data, error } = await supabaseAdmin
+        .from('ticket_comments')
+        .select('*')
+        .in('ticket_id', ticketIds)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false });
+    if (error)
+        throw new Error(`Failed to load ticket comments: ${error.message}`);
+    return (data ?? []).map((row) => mapComment(row, membershipToAccount));
+}
+export async function createTicket(input) {
+    const { accountToMembership } = await loadMembershipMaps(input.apartmentId);
+    const createdByMembershipId = requireMembershipId(accountToMembership, input.createdByAccountId, 'the ticket creator');
+    const { data, error } = await supabaseAdmin
+        .from('maintenance_tickets')
+        .insert({
+        apartment_id: input.apartmentId,
+        title: input.title,
+        description: input.description,
+        category: input.category,
+        status: 'open',
+        created_by_membership_id: createdByMembershipId,
+    })
+        .select('*')
+        .single();
+    if (error)
+        throw new Error(`Failed to create ticket: ${error.message}`);
+    const ticketRow = data;
+    if (input.attachments?.length) {
+        const { error: attachmentsError } = await supabaseAdmin.from('ticket_attachments').insert(input.attachments.map((attachment) => ({
+            id: toUuid(attachment.id),
+            ticket_id: ticketRow.id,
+            file_name: attachment.name,
+            file_type: attachment.type,
+            file_size: attachment.size,
+            file_url: attachment.url,
+        })));
+        if (attachmentsError)
+            throw new Error(`Failed to create ticket attachments: ${attachmentsError.message}`);
+    }
+    const tickets = await listTicketsByApartmentId(input.apartmentId);
+    return tickets.find((ticket) => ticket.id === ticketRow.id) ?? null;
+}
+export async function updateTicket(input) {
+    const { error } = await supabaseAdmin
+        .from('maintenance_tickets')
+        .update({
+        title: input.title,
+        description: input.description,
+        category: input.category,
+        updated_at: new Date().toISOString(),
+    })
+        .eq('id', input.ticketId);
+    if (error)
+        throw new Error(`Failed to update ticket: ${error.message}`);
+    if (input.attachments) {
+        const { error: deleteAttachmentsError } = await supabaseAdmin
+            .from('ticket_attachments')
+            .delete()
+            .eq('ticket_id', input.ticketId);
+        if (deleteAttachmentsError)
+            throw new Error(`Failed to reset ticket attachments: ${deleteAttachmentsError.message}`);
+        if (input.attachments.length) {
+            const { error: attachmentsError } = await supabaseAdmin.from('ticket_attachments').insert(input.attachments.map((attachment) => ({
+                id: toUuid(attachment.id),
+                ticket_id: input.ticketId,
+                file_name: attachment.name,
+                file_type: attachment.type,
+                file_size: attachment.size,
+                file_url: attachment.url,
+            })));
+            if (attachmentsError)
+                throw new Error(`Failed to save ticket attachments: ${attachmentsError.message}`);
+        }
+    }
+    const tickets = await listTicketsByApartmentId(input.apartmentId);
+    return tickets.find((ticket) => ticket.id === input.ticketId) ?? null;
+}
+export async function updateTicketStatus(input) {
+    const { error } = await supabaseAdmin
+        .from('maintenance_tickets')
+        .update({
+        status: input.status,
+        updated_at: new Date().toISOString(),
+    })
+        .eq('id', input.ticketId);
+    if (error)
+        throw new Error(`Failed to update ticket status: ${error.message}`);
+    const tickets = await listTicketsByApartmentId(input.apartmentId);
+    return tickets.find((ticket) => ticket.id === input.ticketId) ?? null;
+}
+export async function deleteTicket(ticketId) {
+    const { error } = await supabaseAdmin.from('maintenance_tickets').delete().eq('id', ticketId);
+    if (error)
+        throw new Error(`Failed to delete ticket: ${error.message}`);
+}
+export async function createTicketComment(input) {
+    const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId);
+    const membershipId = requireMembershipId(accountToMembership, input.accountId, 'the comment author');
+    const { data, error } = await supabaseAdmin
+        .from('ticket_comments')
+        .insert({
+        ticket_id: input.ticketId,
+        membership_id: membershipId,
+        comment_text: input.text,
+    })
+        .select('*')
+        .single();
+    if (error)
+        throw new Error(`Failed to create ticket comment: ${error.message}`);
+    return mapComment(data, membershipToAccount);
+}
