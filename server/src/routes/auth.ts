@@ -3,11 +3,19 @@ import { z } from 'zod'
 import { authenticate, authenticateSession } from '../middleware/authenticate.js'
 import { requireAuth } from '../middleware/require-auth.js'
 import { validateBody } from '../lib/validate.js'
+import { createRateLimit } from '../middleware/rate-limit.js'
 import { createAccount, findAccountByEmail } from '../services/account-service.js'
 import { findActiveMembershipByAccountId } from '../services/membership-service.js'
 import { getApartmentStateSnapshot } from '../services/apartment-service.js'
+import { env } from '../config/env.js'
 
 export const authRouter = Router()
+authRouter.use(
+  createRateLimit({
+    windowMs: env.AUTH_RATE_LIMIT_WINDOW_MS,
+    max: env.AUTH_RATE_LIMIT_MAX,
+  }),
+)
 
 const bootstrapAccountSchema = z.object({
   fullName: z.string().trim().min(1),

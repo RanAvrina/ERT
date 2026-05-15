@@ -2,7 +2,7 @@ import { useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { TicketStatusChip } from '../../components/StatusChip'
+import { TicketStatusActionChip, TicketStatusChip, ticketLabels } from '../../components/StatusChip'
 import { useAuth } from '../../context/AuthContext'
 import { useApartment } from '../../context/ApartmentContext'
 import {
@@ -10,7 +10,7 @@ import {
   type TicketAttachment,
 } from '../../context/TicketsContext'
 import { ticketDetailsPath } from '../../routes/paths'
-import type { TicketCategory } from '../../types/models'
+import type { TicketCategory, TicketStatus } from '../../types/models'
 
 interface TicketFormState {
   title: string
@@ -25,6 +25,14 @@ const initialTicketForm: TicketFormState = {
   description: '',
   category: 'תקלה',
 }
+
+const ticketStatusOptions: { value: TicketStatus; label: string }[] = [
+  { value: 'open', label: ticketLabels.open },
+  { value: 'sent_to_landlord', label: ticketLabels.sent_to_landlord },
+  { value: 'in_progress', label: ticketLabels.in_progress },
+  { value: 'closed', label: ticketLabels.closed },
+  { value: 'cancelled', label: ticketLabels.cancelled },
+]
 
 function formatTicketDate(value: string) {
   return new Intl.DateTimeFormat('he-IL', {
@@ -45,15 +53,15 @@ function readFileAsDataUrl(file: File) {
 
 export function TicketsPage() {
   const { user } = useAuth()
-  const { tickets, addTicket, deleteTicket } = useTickets()
+  const { tickets, addTicket, deleteTicket, updateTicketStatus } = useTickets()
   const { current } = useApartment()
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false)
   const [ticketToDelete, setTicketToDelete] = useState<number | null>(null)
-  const [ticketForm, setTicketForm] =
-    useState<TicketFormState>(initialTicketForm)
+  const [ticketForm, setTicketForm] = useState<TicketFormState>(initialTicketForm)
   const [attachments, setAttachments] = useState<TicketAttachment[]>([])
   const [formError, setFormError] = useState('')
   const [listError, setListError] = useState('')
+  const [openStatusTicketId, setOpenStatusTicketId] = useState<number | null>(null)
   const isLandlord = user?.role === 'landlord'
   const apartmentId = current?.apartment.id ?? 0
   const scopedTickets = tickets.filter((ticket) => ticket.apartment_id === apartmentId)
@@ -133,24 +141,46 @@ export function TicketsPage() {
     }
   }
 
-  function renderTicketContent(ticket: (typeof tickets)[number]) {
+  async function handleInlineStatusChange(ticketId: number, status: TicketStatus) {
+    setListError('')
+
+    try {
+      await updateTicketStatus(ticketId, status)
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : 'עדכון הסטטוס נכשל.')
+    } finally {
+      setOpenStatusTicketId(null)
+    }
+  }
+
+  function renderStatusMenu(ticketId: number, status: TicketStatus) {
+    const isOpen = openStatusTicketId === ticketId
+
     return (
-      <>
-        <div className="ticket-list__main">
-          <div className="ticket-list__title">{ticket.title}</div>
-          <p className="ticket-item-card__preview">{ticket.description}</p>
-          <div className="ticket-list__meta ticket-item-card__meta">
-            <span>קטגוריה: {ticket.category}</span>
-            <span>נפתחה: {formatTicketDate(ticket.created_at)}</span>
-            {ticket.attachments.length > 0 ? (
-              <span>{ticket.attachments.length} קבצים מצורפים</span>
-            ) : null}
+      <div className="inline-status-menu" onClick={(event) => event.stopPropagation()}>
+        <TicketStatusActionChip
+          status={status}
+          onClick={() =>
+            setOpenStatusTicketId((currentId) => (currentId === ticketId ? null : ticketId))
+          }
+        />
+        {isOpen ? (
+          <div className="inline-status-menu__panel">
+            {ticketStatusOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`inline-status-menu__option${
+                  option.value === status ? ' inline-status-menu__option--active' : ''
+                }`}
+                onClick={() => void handleInlineStatusChange(ticketId, option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
-        </div>
-        <div className="ticket-item-card__status">
-          <TicketStatusChip status={ticket.status} />
-        </div>
-      </>
+        ) : null}
+      </div>
     )
   }
 
@@ -168,35 +198,45 @@ export function TicketsPage() {
         )}
       </div>
 
-      <Card title="רשימת פניות">
+      <Card title="רשימת פניות" className="status-menu-card">
         {listError ? <p className="form-message form-message--error">{listError}</p> : null}
         <ul className="ticket-list ticket-list--cards">
-          {scopedTickets.map((ticket) => {
-            return (
-              <li key={ticket.id} className="ticket-list__item">
-                <div className="ticket-item-card">
-                  <Link
-                    to={ticketDetailsPath(ticket.id)}
-                    className="ticket-list__link"
-                    aria-label={`פתיחת הפנייה: ${ticket.title}`}
-                  >
-                    {renderTicketContent(ticket)}
-                  </Link>
-                  {isLandlord ? null : (
-                    <div className="payment-form__actions">
-                      <button
-                        type="button"
-                        className="btn-text btn-text--danger"
-                        onClick={() => setTicketToDelete(ticket.id)}
-                      >
-                        מחיקה
-                      </button>
+          {scopedTickets.map((ticket) => (
+            <li key={ticket.id} className="ticket-list__item">
+              <div className="ticket-item-card">
+                <Link
+                  to={ticketDetailsPath(ticket.id)}
+                  className="ticket-list__link"
+                  aria-label={`פתיחת הפנייה: ${ticket.title}`}
+                >
+                  <div className="ticket-list__main">
+                    <div className="ticket-list__title">{ticket.title}</div>
+                    <p className="ticket-item-card__preview">{ticket.description}</p>
+                    <div className="ticket-list__meta ticket-item-card__meta">
+                      <span>נפתחה: {formatTicketDate(ticket.created_at)}</span>
+                      {ticket.attachments.length > 0 ? (
+                        <span>{ticket.attachments.length} קבצים מצורפים</span>
+                      ) : null}
                     </div>
-                  )}
+                  </div>
+                </Link>
+                <div className="ticket-item-card__status">
+                  {isLandlord ? renderStatusMenu(ticket.id, ticket.status) : <TicketStatusChip status={ticket.status} />}
                 </div>
-              </li>
-            )
-          })}
+                {isLandlord ? null : (
+                  <div className="payment-form__actions">
+                    <button
+                      type="button"
+                      className="btn-text btn-text--danger"
+                      onClick={() => setTicketToDelete(ticket.id)}
+                    >
+                      מחיקה
+                    </button>
+                  </div>
+                )}
+              </div>
+            </li>
+          ))}
         </ul>
       </Card>
 
@@ -235,9 +275,7 @@ export function TicketsPage() {
                 <textarea
                   className="field__input ticket-form__textarea"
                   value={ticketForm.description}
-                  onChange={(event) =>
-                    updateTicketForm('description', event.target.value)
-                  }
+                  onChange={(event) => updateTicketForm('description', event.target.value)}
                   placeholder="כתבו בקצרה מה קרה ומה צריך לבדוק"
                 />
               </label>

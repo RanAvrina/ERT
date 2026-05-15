@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAssistant } from '../context/AssistantContext'
 import { useApartment } from '../context/ApartmentContext'
 
@@ -14,6 +14,16 @@ export function AssistantPanel() {
     ask,
   } = useAssistant()
   const [draft, setDraft] = useState('')
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    messagesEndRef.current?.scrollIntoView({
+      block: 'end',
+      behavior: 'smooth',
+    })
+  }, [isLoading, isOpen, messages])
 
   if (!isOpen || !current) return null
 
@@ -51,7 +61,12 @@ export function AssistantPanel() {
             key={message.id}
             className={`assistant-panel__message assistant-panel__message--${message.role}`}
           >
-            {message.text}
+            {message.text.split('\n').map((line, index, lines) => (
+              <span key={`${message.id}-${index}`}>
+                {line}
+                {index < lines.length - 1 ? <br /> : null}
+              </span>
+            ))}
           </div>
         ))}
 
@@ -60,6 +75,8 @@ export function AssistantPanel() {
             טוען תשובה...
           </div>
         ) : null}
+
+        <div ref={messagesEndRef} aria-hidden="true" />
       </div>
 
       <div className="assistant-panel__suggestions">

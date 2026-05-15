@@ -207,8 +207,9 @@ create table if not exists apartment_info_attachments (
   created_at timestamptz not null default now()
 );
 
--- Temporary development RLS policies for direct frontend access via Supabase publishable key.
--- Tighten these before production and replace them with membership-aware policies.
+-- Hardened RLS policies.
+-- The app accesses business data through the Express server using the service role key.
+-- Direct frontend access to apartment/business tables is intentionally blocked.
 
 alter table accounts enable row level security;
 alter table apartments enable row level security;
@@ -228,117 +229,50 @@ alter table apartment_info_items enable row level security;
 alter table apartment_info_attachments enable row level security;
 
 drop policy if exists accounts_dev_all_authenticated on accounts;
-create policy accounts_dev_all_authenticated on accounts
-  for all to authenticated
-  using (true)
-  with check (true);
-
-drop policy if exists apartments_dev_all_authenticated on apartments;
-create policy apartments_dev_all_authenticated on apartments
-  for all to authenticated
-  using (true)
-  with check (true);
-
-drop policy if exists apartment_memberships_dev_all_authenticated on apartment_memberships;
-create policy apartment_memberships_dev_all_authenticated on apartment_memberships
-  for all to authenticated
-  using (true)
-  with check (true);
-
-drop policy if exists invites_dev_all_authenticated on invites;
-create policy invites_dev_all_authenticated on invites
-  for all to authenticated
-  using (true)
-  with check (true);
-
-drop policy if exists invites_dev_select_anon on invites;
-create policy invites_dev_select_anon on invites
-  for select to anon
-  using (true);
-
-drop policy if exists apartments_dev_select_anon on apartments;
-create policy apartments_dev_select_anon on apartments
-  for select to anon
-  using (true);
-
-drop policy if exists apartment_memberships_dev_select_anon on apartment_memberships;
-create policy apartment_memberships_dev_select_anon on apartment_memberships
-  for select to anon
-  using (true);
-
 drop policy if exists accounts_dev_select_anon on accounts;
-create policy accounts_dev_select_anon on accounts
-  for select to anon
-  using (true);
-
+drop policy if exists apartments_dev_all_authenticated on apartments;
+drop policy if exists apartments_dev_select_anon on apartments;
+drop policy if exists apartment_memberships_dev_all_authenticated on apartment_memberships;
+drop policy if exists apartment_memberships_dev_select_anon on apartment_memberships;
+drop policy if exists invites_dev_all_authenticated on invites;
+drop policy if exists invites_dev_select_anon on invites;
 drop policy if exists expenses_dev_all_authenticated on expenses;
-create policy expenses_dev_all_authenticated on expenses
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists expense_participants_dev_all_authenticated on expense_participants;
-create policy expense_participants_dev_all_authenticated on expense_participants
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists expense_attachments_dev_all_authenticated on expense_attachments;
-create policy expense_attachments_dev_all_authenticated on expense_attachments
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists payments_dev_all_authenticated on payments;
-create policy payments_dev_all_authenticated on payments
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists tasks_dev_all_authenticated on tasks;
-create policy tasks_dev_all_authenticated on tasks
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists shopping_lists_dev_all_authenticated on shopping_lists;
-create policy shopping_lists_dev_all_authenticated on shopping_lists
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists shopping_items_dev_all_authenticated on shopping_items;
-create policy shopping_items_dev_all_authenticated on shopping_items
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists maintenance_tickets_dev_all_authenticated on maintenance_tickets;
-create policy maintenance_tickets_dev_all_authenticated on maintenance_tickets
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists ticket_comments_dev_all_authenticated on ticket_comments;
-create policy ticket_comments_dev_all_authenticated on ticket_comments
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists ticket_attachments_dev_all_authenticated on ticket_attachments;
-create policy ticket_attachments_dev_all_authenticated on ticket_attachments
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists apartment_info_items_dev_all_authenticated on apartment_info_items;
-create policy apartment_info_items_dev_all_authenticated on apartment_info_items
-  for all to authenticated
-  using (true)
-  with check (true);
-
 drop policy if exists apartment_info_attachments_dev_all_authenticated on apartment_info_attachments;
-create policy apartment_info_attachments_dev_all_authenticated on apartment_info_attachments
-  for all to authenticated
-  using (true)
-  with check (true);
+
+drop policy if exists accounts_self_select on accounts;
+create policy accounts_self_select on accounts
+  for select to authenticated
+  using (
+    lower(trim(email)) = lower(trim(coalesce(auth.jwt() ->> 'email', '')))
+  );
+
+drop policy if exists accounts_self_update on accounts;
+create policy accounts_self_update on accounts
+  for update to authenticated
+  using (
+    lower(trim(email)) = lower(trim(coalesce(auth.jwt() ->> 'email', '')))
+  )
+  with check (
+    lower(trim(email)) = lower(trim(coalesce(auth.jwt() ->> 'email', '')))
+  );
+
+drop policy if exists apartment_memberships_self_select on apartment_memberships;
+create policy apartment_memberships_self_select on apartment_memberships
+  for select to authenticated
+  using (
+    account_id in (
+      select id
+      from accounts
+      where lower(trim(email)) = lower(trim(coalesce(auth.jwt() ->> 'email', '')))
+    )
+  );

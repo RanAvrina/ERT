@@ -15,15 +15,12 @@ import {
   createTicketCommentViaApi,
   createTicketViaApi,
   deleteTicketViaApi,
+  listTicketsViaApi,
   updateTicketStatusViaApi,
   updateTicketViaApi,
   type TicketWithAttachments as TicketWithAttachmentsApi,
 } from '../data/server/ticketsApi'
-import {
-  listTicketCommentsByApartmentId,
-  listTicketsByApartmentId,
-  type TicketWithAttachments,
-} from '../data/supabase/ticketsRepository'
+import type { TicketWithAttachments } from '../data/supabase/ticketsRepository'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
 import type {
@@ -86,10 +83,9 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
       if (loadedApartmentIdRef.current === current.apartment.id) return
 
       try {
-        const [nextTickets, nextComments] = await Promise.all([
-          listTicketsByApartmentId(current.apartment.id),
-          listTicketCommentsByApartmentId(current.apartment.id),
-        ])
+        const { tickets: nextTickets, comments: nextComments } = await listTicketsViaApi(
+          current.apartment.id,
+        )
 
         if (!cancelled) {
           setTickets(nextTickets)

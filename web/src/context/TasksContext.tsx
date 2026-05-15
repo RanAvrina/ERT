@@ -12,9 +12,9 @@ import { useTasksStore } from '../data/repositories/tasksRepository'
 import {
   createTaskViaApi,
   deleteTaskViaApi,
+  listTasksViaApi,
   updateTaskViaApi,
 } from '../data/server/tasksApi'
-import { listTasksByApartmentId } from '../data/supabase/tasksRepository'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
 import type { Task, TaskStatus } from '../types/models'
@@ -71,7 +71,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       if (loadedApartmentIdRef.current === current.apartment.id) return
 
       try {
-        const nextTasks = await listTasksByApartmentId(current.apartment.id)
+        const nextTasks = await listTasksViaApi(current.apartment.id)
         if (!cancelled) {
           setTasks(nextTasks)
           nextTaskId.current = Math.max(...nextTasks.map((item) => item.id), 0) + 1

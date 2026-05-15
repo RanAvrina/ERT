@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { TaskStatusChip } from '../../components/StatusChip'
+import { TaskStatusActionChip, taskLabels } from '../../components/StatusChip'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import {
@@ -62,7 +62,7 @@ export function TasksPage() {
   )
   const getUserName = (userId: number | null) =>
     roommates.find((roommate) => roommate.id === userId)?.name
-  const { tasks, addTask, updateTask, deleteTask } = useTasks()
+  const { tasks, addTask, updateTask, updateTaskStatus, deleteTask } = useTasks()
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
@@ -72,6 +72,8 @@ export function TasksPage() {
   )
   const [formError, setFormError] = useState('')
   const [detailsError, setDetailsError] = useState('')
+  const [inlineError, setInlineError] = useState('')
+  const [openStatusTaskKey, setOpenStatusTaskKey] = useState<string | null>(null)
 
   const today = getTodayDate()
   const apartmentTasks = tasks.filter((task) => task.apartment_id === apartmentId)
@@ -166,6 +168,51 @@ export function TasksPage() {
     }
   }
 
+  async function handleInlineStatusChange(task: Task, status: TaskStatus) {
+    if (task.status === status) return
+    setInlineError('')
+
+    try {
+      const updatedTask = await updateTaskStatus(task.id, status)
+      if (selectedTask?.id === task.id && updatedTask) setSelectedTask(updatedTask)
+    } catch (error) {
+      setInlineError(error instanceof Error ? error.message : 'עדכון הסטטוס נכשל.')
+    } finally {
+      setOpenStatusTaskKey(null)
+    }
+  }
+
+  function renderStatusMenu(task: Task, menuKey: string) {
+    const isOpen = openStatusTaskKey === menuKey
+
+    return (
+      <div className="inline-status-menu" onClick={(event) => event.stopPropagation()}>
+        <TaskStatusActionChip
+          status={task.status}
+          onClick={() =>
+            setOpenStatusTaskKey((currentKey) => (currentKey === menuKey ? null : menuKey))
+          }
+        />
+        {isOpen ? (
+          <div className="inline-status-menu__panel">
+            {taskStatusOptions.map((status) => (
+              <button
+                key={status.value}
+                type="button"
+                className={`inline-status-menu__option${
+                  status.value === task.status ? ' inline-status-menu__option--active' : ''
+                }`}
+                onClick={() => void handleInlineStatusChange(task, status.value)}
+              >
+                {status.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <div className="page tasks-page">
       <div className="page__head tasks-hero">
@@ -189,7 +236,7 @@ export function TasksPage() {
         </Card>
       </section>
 
-      <Card title="המטלות הפתוחות שלך">
+      <Card title="המטלות הפתוחות שלך" className="status-menu-card">
         {myOpenTasks.length === 0 ? (
           <p className="muted">אין לך מטלות פתוחות כרגע.</p>
         ) : (
@@ -197,14 +244,14 @@ export function TasksPage() {
             {myOpenTasks.map((task) => (
               <li key={task.id} className="task-list__item">
                 <span className="task-list__title">{task.title}</span>
-                <TaskStatusChip status={task.status} />
+                {renderStatusMenu(task, `mine-${task.id}`)}
               </li>
             ))}
           </ul>
         )}
       </Card>
 
-      <Card title="מטלות באיחור">
+      <Card title="מטלות באיחור" className="status-menu-card">
         {overdueTasks.length === 0 ? (
           <p className="muted">אין מטלות באיחור.</p>
         ) : (
@@ -218,14 +265,15 @@ export function TasksPage() {
                     {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}
                   </div>
                 </div>
-                <TaskStatusChip status={task.status} />
+                {renderStatusMenu(task, `overdue-${task.id}`)}
               </li>
             ))}
           </ul>
         )}
       </Card>
 
-      <Card title="מטלות הדירה">
+      <Card title="מטלות הדירה" className="status-menu-card">
+        {inlineError ? <p className="form-message form-message--error">{inlineError}</p> : null}
         <ul className="task-list task-list--cards">
           {apartmentTasks.map((task) => (
             <li key={task.id} className="task-list__item task-item-card">
@@ -241,10 +289,10 @@ export function TasksPage() {
                     <span>יעד: {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}</span>
                   </div>
                 </div>
-                <div className="task-item-card__status">
-                  <TaskStatusChip status={task.status} />
-                </div>
               </button>
+              <div className="task-item-card__status">
+                {renderStatusMenu(task, `apartment-${task.id}`)}
+              </div>
             </li>
           ))}
         </ul>
@@ -335,7 +383,7 @@ export function TasksPage() {
                 </div>
                 <div>
                   <span>סטטוס</span>
-                  <strong>{taskStatusOptions.find((option) => option.value === selectedTask.status)?.label ?? selectedTask.status}</strong>
+                  <strong>{taskLabels[selectedTask.status] ?? selectedTask.status}</strong>
                 </div>
               </div>
 

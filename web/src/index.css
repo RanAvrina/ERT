@@ -360,6 +360,109 @@ input {
   color: #0f766e;
 }
 
+.chip--button {
+  border: none;
+  cursor: pointer;
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.chip--button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+}
+
+.chip--button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.inline-status-menu {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  overflow: visible;
+}
+
+.inline-status-menu__panel {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: calc(100% + 8px);
+  inset-inline-end: auto;
+  transform: translateY(-50%);
+  z-index: 24;
+  min-width: 112px;
+  max-width: min(140px, calc(100vw - 40px));
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
+}
+
+.status-menu-card,
+.status-menu-card .card__body,
+.task-list--cards,
+.task-list--compact,
+.shop-list--cards,
+.ticket-list--cards,
+.task-list__item,
+.shop-list__item,
+.ticket-list__item,
+.task-item-card,
+.shop-item-card,
+.ticket-item-card,
+.task-item-card__status,
+.shop-item-card__status,
+.ticket-item-card__status {
+  overflow: visible;
+}
+
+.inline-status-menu__option {
+  border: none;
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--color-text);
+  border-radius: 10px;
+  padding: 7px 10px;
+  text-align: right;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.inline-status-menu__option:hover {
+  background: rgba(46, 196, 182, 0.12);
+  color: #0f766e;
+}
+
+.inline-status-menu__option--active {
+  background: rgba(46, 196, 182, 0.16);
+  color: #0f766e;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .inline-status-menu__panel {
+    min-width: 102px;
+    max-width: min(124px, calc(100vw - 32px));
+    inset-inline-start: calc(100% + 6px);
+    padding: 5px;
+    border-radius: 12px;
+  }
+
+  .inline-status-menu__option {
+    padding: 6px 9px;
+    font-size: 0.78rem;
+  }
+}
+
 .stat-row {
   display: flex;
   justify-content: space-between;
@@ -1668,6 +1771,11 @@ input {
   font-size: 0.82rem;
 }
 
+.ticket-status__hint {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
 .ticket-form {
   display: grid;
   gap: 14px;
@@ -2301,6 +2409,10 @@ input {
   justify-self: end;
   grid-row: 1;
   grid-column: 2;
+}
+
+.debt-list__actions {
+  grid-column: 1 / -1;
 }
 
 .payment-list--cards {

@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent 
 import { Link } from 'react-router-dom'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { listApartmentInfoItemsByApartmentId } from '../../data/supabase/apartmentInfoRepository'
 import {
   createApartmentInfoItemViaApi,
   deleteApartmentInfoItemViaApi,
+  listApartmentInfoViaApi,
   updateApartmentInfoItemViaApi,
 } from '../../data/server/apartmentInfoApi'
 import { useApartmentInfoStore } from '../../data/repositories/apartmentInfoRepository'
@@ -97,7 +97,7 @@ export function ApartmentInfoPage() {
       }
 
       try {
-        const nextItems = await listApartmentInfoItemsByApartmentId(apartmentId)
+        const nextItems = await listApartmentInfoViaApi(apartmentId)
         if (!cancelled) {
           setItems(nextItems)
           loadedApartmentIdRef.current = apartmentId

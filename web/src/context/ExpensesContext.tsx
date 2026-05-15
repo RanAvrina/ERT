@@ -13,17 +13,15 @@ import {
   usePaymentsStore,
 } from '../data/repositories/financeRepository'
 import {
-  createExpenseRecord,
-  createPaymentRecord,
-  softDeleteExpenseRecord,
-  softDeletePaymentRecord,
-  updateExpenseRecord,
-  updatePaymentRecord,
-} from '../data/supabase/financeRepository'
-import {
-  listExpensesByApartmentId,
-  listPaymentsByApartmentId,
-} from '../data/supabase/financeRepository'
+  createExpenseViaApi,
+  createPaymentViaApi,
+  deleteExpenseViaApi,
+  deletePaymentViaApi,
+  listExpensesViaApi,
+  listPaymentsViaApi,
+  updateExpenseViaApi,
+  updatePaymentViaApi,
+} from '../data/server/financeApi'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
 import type { Expense, Payment } from '../types/models'
@@ -168,8 +166,8 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
 
       try {
         const [nextExpenses, nextPayments] = await Promise.all([
-          listExpensesByApartmentId(current.apartment.id),
-          listPaymentsByApartmentId(current.apartment.id),
+          listExpensesViaApi(current.apartment.id),
+          listPaymentsViaApi(current.apartment.id),
         ])
 
         if (!cancelled) {
@@ -198,7 +196,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
   const addExpense = useCallback(
     async (expense: NewExpenseInput) => {
       if (isSupabaseConfigured) {
-        const nextExpense = await createExpenseRecord({
+        const nextExpense = await createExpenseViaApi({
           apartmentId: expense.apartment_id,
           paidByAccountId: expense.paid_by,
           amount: expense.amount,
@@ -228,12 +226,12 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
   const addPayment = useCallback(
     async (payment: NewPaymentInput) => {
       if (isSupabaseConfigured) {
-        const nextPayment = await createPaymentRecord({
+        const nextPayment = await createPaymentViaApi({
           apartmentId: payment.apartment_id,
           payerAccountId: payment.payer_id,
           payeeAccountId: payment.payee_id,
           amount: payment.amount,
-          createdAt: payment.created_at,
+          paymentDate: payment.created_at,
           note: payment.note ?? null,
         })
 
@@ -258,13 +256,13 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
     async (paymentId: number, payment: UpdatePaymentInput) => {
       if (isSupabaseConfigured) {
         const apartmentId = current?.apartment.id ?? 0
-        const updatedPayment = await updatePaymentRecord({
+        const updatedPayment = await updatePaymentViaApi({
           paymentId,
           apartmentId,
           payerAccountId: payment.payer_id,
           payeeAccountId: payment.payee_id,
           amount: payment.amount,
-          createdAt: payment.created_at,
+          paymentDate: payment.created_at,
           note: payment.note ?? null,
         })
 
@@ -292,7 +290,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
     async (expenseId: number, expense: UpdateExpenseInput) => {
       if (isSupabaseConfigured) {
         const apartmentId = current?.apartment.id ?? 0
-        const updatedExpense = await updateExpenseRecord({
+        const updatedExpense = await updateExpenseViaApi({
           expenseId,
           apartmentId,
           paidByAccountId: expense.paid_by,
@@ -326,7 +324,8 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
   const deleteExpense = useCallback(
     async (expenseId: number) => {
       if (isSupabaseConfigured) {
-        await softDeleteExpenseRecord(expenseId)
+        const apartmentId = current?.apartment.id ?? 0
+        await deleteExpenseViaApi(apartmentId, expenseId)
       }
 
       setExpenses((currentExpenses) =>
@@ -341,7 +340,8 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
   const deletePayment = useCallback(
     async (paymentId: number) => {
       if (isSupabaseConfigured) {
-        await softDeletePaymentRecord(paymentId)
+        const apartmentId = current?.apartment.id ?? 0
+        await deletePaymentViaApi(apartmentId, paymentId)
       }
 
       setPayments((currentPayments) =>

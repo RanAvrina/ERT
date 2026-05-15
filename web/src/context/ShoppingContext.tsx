@@ -12,9 +12,9 @@ import { useShoppingItemsStore } from '../data/repositories/shoppingRepository'
 import {
   createShoppingItemViaApi,
   deleteShoppingItemViaApi,
+  listShoppingItemsViaApi,
   updateShoppingItemViaApi,
 } from '../data/server/shoppingApi'
-import { listShoppingItemsByApartmentId } from '../data/supabase/shoppingRepository'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
 import type { ShoppingItem, ShoppingItemStatus } from '../types/models'
@@ -66,7 +66,7 @@ export function ShoppingProvider({ children }: { children: ReactNode }) {
       if (loadedApartmentIdRef.current === current.apartment.id) return
 
       try {
-        const nextItems = await listShoppingItemsByApartmentId(current.apartment.id)
+        const nextItems = await listShoppingItemsViaApi(current.apartment.id)
         if (!cancelled) {
           setItems(nextItems)
           nextItemId.current = Math.max(...nextItems.map((item) => item.id), 0) + 1

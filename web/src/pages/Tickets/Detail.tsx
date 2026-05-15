@@ -1,8 +1,8 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { TicketStatusChip } from '../../components/StatusChip'
+import { TicketStatusActionChip, TicketStatusChip, ticketLabels } from '../../components/StatusChip'
 import { useAuth } from '../../context/AuthContext'
 import { useApartment } from '../../context/ApartmentContext'
 import { useTickets } from '../../context/TicketsContext'
@@ -16,6 +16,14 @@ interface TicketEditFormState {
 }
 
 const ticketCategoryOptions: TicketCategory[] = ['תקלה', 'בקשה', 'כספים', 'אחר']
+
+const ticketStatusCycle: TicketStatus[] = [
+  'open',
+  'sent_to_landlord',
+  'in_progress',
+  'closed',
+  'cancelled',
+]
 
 function formatTicketDateTime(value: string) {
   return new Intl.DateTimeFormat('he-IL', {
@@ -46,13 +54,9 @@ export function TicketDetailPage() {
   const [commentError, setCommentError] = useState('')
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [ticketToDelete, setTicketToDelete] = useState(false)
-  const [editForm, setEditForm] = useState<TicketEditFormState>({
-    title: ticket?.title ?? '',
-    description: ticket?.description ?? '',
-    category: ticket?.category ?? 'תקלה',
-  })
   const [editError, setEditError] = useState('')
   const [actionError, setActionError] = useState('')
+  const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false)
   const isLandlord = user?.role === 'landlord'
 
   if (!ticket || ticket.apartment_id !== apartmentId) {
@@ -67,6 +71,11 @@ export function TicketDetailPage() {
   }
 
   const currentTicket = ticket
+  const [editForm, setEditForm] = useState<TicketEditFormState>({
+    title: currentTicket.title,
+    description: currentTicket.description,
+    category: currentTicket.category ?? 'תקלה',
+  })
 
   const knownUsers = [
     ...(current?.roommates ?? []),
@@ -93,12 +102,14 @@ export function TicketDetailPage() {
     }
   }
 
-  async function handleStatusChange(event: ChangeEvent<HTMLSelectElement>) {
+  async function handleStatusChange(status: TicketStatus) {
     setActionError('')
     try {
-      await updateTicketStatus(ticketId, event.target.value as TicketStatus)
+      await updateTicketStatus(ticketId, status)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'עדכון הסטטוס נכשל.')
+    } finally {
+      setIsStatusMenuOpen(false)
     }
   }
 
@@ -161,23 +172,33 @@ export function TicketDetailPage() {
       <div className="page__head page__head--ticket">
         <h1 className="page__title">{currentTicket.title}</h1>
         <div className="ticket-status">
-          <TicketStatusChip status={currentTicket.status} />
           {isLandlord ? (
-            <label className="ticket-status__control">
-              <span>סטטוס טיפול</span>
-              <select
-                className="field__input"
-                value={currentTicket.status}
-                onChange={handleStatusChange}
-              >
-                <option value="open">פתוח</option>
-                <option value="sent_to_landlord">הועבר לבעל הדירה</option>
-                <option value="in_progress">בטיפול</option>
-                <option value="closed">סגור</option>
-                <option value="cancelled">מבוטל</option>
-              </select>
-            </label>
-          ) : null}
+            <div className="inline-status-menu">
+              <TicketStatusActionChip
+                status={currentTicket.status}
+                onClick={() => setIsStatusMenuOpen((currentValue) => !currentValue)}
+              />
+              {isStatusMenuOpen ? (
+                <div className="inline-status-menu__panel">
+                  {ticketStatusCycle.map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      className={`inline-status-menu__option${
+                        status === currentTicket.status ? ' inline-status-menu__option--active' : ''
+                      }`}
+                      onClick={() => void handleStatusChange(status)}
+                    >
+                      {ticketLabels[status]}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <TicketStatusChip status={currentTicket.status} />
+          )}
+          {isLandlord ? <span className="ticket-status__hint">לחיצה על הסטטוס פותחת אפשרויות</span> : null}
         </div>
       </div>
 
@@ -203,7 +224,6 @@ export function TicketDetailPage() {
         {actionError ? <p className="form-message form-message--error">{actionError}</p> : null}
         <p className="ticket-body">{currentTicket.description}</p>
         <div className="ticket-facts">
-          <span>קטגוריה: {currentTicket.category}</span>
           <span>נפתחה על ידי: {author?.name ?? 'דייר'}</span>
           <span>נפתחה: {formatTicketDateTime(currentTicket.created_at)}</span>
         </div>

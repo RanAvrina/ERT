@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { ShoppingItemStatusChip } from '../../components/StatusChip'
+import { ShoppingItemStatusActionChip, shoppingItemLabels } from '../../components/StatusChip'
 import { useApartment } from '../../context/ApartmentContext'
 import { useShopping } from '../../context/ShoppingContext'
 import type { ShoppingItem, ShoppingItemStatus } from '../../types/models'
@@ -18,6 +18,7 @@ type ShoppingFilter = 'all' | 'open' | 'purchased'
 const shoppingStatusOptions: { value: ShoppingItemStatus; label: string }[] = [
   { value: 'open', label: 'פתוח' },
   { value: 'purchased', label: 'נרכש' },
+  { value: 'cancelled', label: 'בוטל' },
 ]
 
 const shoppingFilterOptions: { value: ShoppingFilter; label: string }[] = [
@@ -56,6 +57,8 @@ export function ShoppingPage() {
   const [selectedFilter, setSelectedFilter] = useState<ShoppingFilter>('all')
   const [isCompletedOpen, setIsCompletedOpen] = useState(true)
   const [detailsError, setDetailsError] = useState('')
+  const [inlineError, setInlineError] = useState('')
+  const [openStatusItemId, setOpenStatusItemId] = useState<number | null>(null)
 
   const apartmentItems = useMemo(
     () => items.filter((item) => (item.apartment_id ?? apartmentId) === apartmentId),
@@ -68,7 +71,7 @@ export function ShoppingPage() {
     selectedFilter === 'all' || selectedFilter === 'purchased'
 
   function updateShoppingForm(field: keyof ShoppingFormState, value: string) {
-    setShoppingForm((current) => ({ ...current, [field]: value }))
+    setShoppingForm((currentForm) => ({ ...currentForm, [field]: value }))
   }
 
   function openAddItemModal() {
@@ -151,6 +154,49 @@ export function ShoppingPage() {
     }
   }
 
+  async function handleInlineStatusChange(item: ShoppingItem, status: ShoppingItemStatus) {
+    if (item.status === status) return
+    setInlineError('')
+
+    try {
+      const updatedItem = await updateItemStatus(item.id, status, defaultActorId)
+      if (selectedItem?.id === item.id && updatedItem) setSelectedItem(updatedItem)
+    } catch (error) {
+      setInlineError(error instanceof Error ? error.message : 'עדכון הסטטוס נכשל.')
+    } finally {
+      setOpenStatusItemId(null)
+    }
+  }
+
+  function renderStatusMenu(item: ShoppingItem) {
+    const isOpen = openStatusItemId === item.id
+
+    return (
+      <div className="inline-status-menu" onClick={(event) => event.stopPropagation()}>
+        <ShoppingItemStatusActionChip
+          status={item.status}
+          onClick={() => setOpenStatusItemId((currentId) => (currentId === item.id ? null : item.id))}
+        />
+        {isOpen ? (
+          <div className="inline-status-menu__panel">
+            {shoppingStatusOptions.map((status) => (
+              <button
+                key={status.value}
+                type="button"
+                className={`inline-status-menu__option${
+                  status.value === item.status ? ' inline-status-menu__option--active' : ''
+                }`}
+                onClick={() => void handleInlineStatusChange(item, status.value)}
+              >
+                {status.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   function renderShoppingItems(sectionItems: ShoppingItem[], emptyText: string) {
     if (sectionItems.length === 0) {
       return <p className="muted shopping-empty">{emptyText}</p>
@@ -177,10 +223,8 @@ export function ShoppingPage() {
                   <span>קטגוריה: {item.category ?? 'ללא קטגוריה'}</span>
                 </div>
               </div>
-              <div className="shop-item-card__status">
-                <ShoppingItemStatusChip status={item.status} />
-              </div>
             </button>
+            <div className="shop-item-card__status">{renderStatusMenu(item)}</div>
           </li>
         ))}
       </ul>
@@ -227,8 +271,10 @@ export function ShoppingPage() {
         ))}
       </div>
 
+      {inlineError ? <p className="form-message form-message--error">{inlineError}</p> : null}
+
       {shouldShowOpenItems ? (
-        <Card className="shopping-active-card" title="לקנייה עכשיו">
+        <Card className="shopping-active-card status-menu-card" title="לקנייה עכשיו">
           <p className="shopping-section-note">
             הפריטים הפתוחים ברשימה הפעילה של הדירה.
           </p>
@@ -237,11 +283,11 @@ export function ShoppingPage() {
       ) : null}
 
       {shouldShowPurchasedItems ? (
-        <Card>
+        <Card className="status-menu-card">
           <button
             type="button"
             className="shopping-completed-toggle"
-            onClick={() => setIsCompletedOpen((current) => !current)}
+            onClick={() => setIsCompletedOpen((currentValue) => !currentValue)}
             aria-expanded={isCompletedOpen}
           >
             <span>
@@ -275,7 +321,7 @@ export function ShoppingPage() {
                 <p>
                   {editingItem
                     ? 'אפשר לעדכן כאן את פרטי הפריט.'
-                    : 'הפריט יישמר כרגע רק ברשימת הדמו המקומית.'}
+                    : 'הפריט יתווסף מיד לרשימת הקניות של הדירה.'}
                 </p>
               </div>
               <button type="button" className="btn-text" onClick={closeShoppingModal}>
@@ -296,17 +342,17 @@ export function ShoppingPage() {
 
               <div className="shopping-form__grid">
                 <label className="field">
-                  <span className="field__label">כמות (אופציונלי)</span>
+                  <span className="field__label">כמות</span>
                   <input
                     className="field__input"
                     value={shoppingForm.quantity}
                     onChange={(event) => updateShoppingForm('quantity', event.target.value)}
-                    placeholder="לדוגמה: תבנית אחת"
+                    placeholder="לדוגמה: 2"
                   />
                 </label>
 
                 <label className="field">
-                  <span className="field__label">קטגוריה (אופציונלי)</span>
+                  <span className="field__label">קטגוריה</span>
                   <input
                     className="field__input"
                     value={shoppingForm.category}
@@ -385,10 +431,7 @@ export function ShoppingPage() {
                 </div>
                 <div>
                   <span>סטטוס</span>
-                  <strong>
-                    {shoppingStatusOptions.find((option) => option.value === selectedItem.status)
-                      ?.label ?? selectedItem.status}
-                  </strong>
+                  <strong>{shoppingItemLabels[selectedItem.status] ?? selectedItem.status}</strong>
                 </div>
               </div>
 

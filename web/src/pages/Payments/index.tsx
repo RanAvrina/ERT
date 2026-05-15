@@ -122,6 +122,16 @@ function formatDateTime(value: string) {
   }).format(new Date(value))
 }
 
+function buildFormFromSettlement(settlement: BalanceSettlement): PaymentFormState {
+  return {
+    payerId: String(settlement.payer_id),
+    payeeId: String(settlement.payee_id),
+    amount: String(Number(settlement.amount)),
+    paymentDate: new Date().toISOString().slice(0, 10),
+    note: '',
+  }
+}
+
 export function PaymentsPage() {
   const { user } = useAuth()
   const { current } = useApartment()
@@ -179,6 +189,14 @@ export function PaymentsPage() {
   function openAddPaymentModal() {
     setEditingPayment(null)
     setPaymentForm(createInitialPaymentForm(roommates, user?.id))
+    setFormError('')
+    setIsPaymentModalOpen(true)
+  }
+
+  function openSettlementPaymentModal(settlement: BalanceSettlement) {
+    setSelectedPayment(null)
+    setEditingPayment(null)
+    setPaymentForm(buildFormFromSettlement(settlement))
     setFormError('')
     setIsPaymentModalOpen(true)
   }
@@ -352,6 +370,15 @@ export function PaymentsPage() {
                     <strong className="debt-list__amount">
                       {formatCurrency(settlement.amount)}
                     </strong>
+                    <div className="debt-list__actions">
+                      <button
+                        type="button"
+                        className="btn btn--secondary btn--small"
+                        onClick={() => openSettlementPaymentModal(settlement)}
+                      >
+                        רישום מלא
+                      </button>
+                    </div>
                   </li>
                 )
               })}
