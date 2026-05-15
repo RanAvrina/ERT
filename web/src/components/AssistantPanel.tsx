@@ -9,12 +9,15 @@ export function AssistantPanel() {
     isLoading,
     messages,
     suggestions,
-    contextSnapshot,
+    pendingAction,
     close,
     ask,
+    confirmAction,
+    cancelAction,
   } = useAssistant()
   const [draft, setDraft] = useState('')
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const quickQuestions = suggestions.slice(0, 3)
 
   useEffect(() => {
     if (!isOpen) return
@@ -23,7 +26,7 @@ export function AssistantPanel() {
       block: 'end',
       behavior: 'smooth',
     })
-  }, [isLoading, isOpen, messages])
+  }, [isLoading, isOpen, messages, pendingAction])
 
   if (!isOpen || !current) return null
 
@@ -47,15 +50,14 @@ export function AssistantPanel() {
         </button>
       </div>
 
-      {contextSnapshot ? (
-        <div className="assistant-panel__summary">
-          <span>משימות פתוחות: {contextSnapshot.openTasksCount}</span>
-          <span>קניות פתוחות: {contextSnapshot.openShoppingItemsCount}</span>
-          <span>פניות פתוחות: {contextSnapshot.openTicketsCount}</span>
-        </div>
-      ) : null}
-
       <div className="assistant-panel__messages">
+        {messages.length === 0 ? (
+          <div className="assistant-panel__message assistant-panel__message--assistant assistant-panel__message--intro">
+            אני מחובר לנתונים של {current.apartment.name}. אפשר לשאול אותי על חובות, קניות,
+            משימות ופניות.
+          </div>
+        ) : null}
+
         {messages.map((message) => (
           <div
             key={message.id}
@@ -70,17 +72,41 @@ export function AssistantPanel() {
           </div>
         ))}
 
+        {pendingAction ? (
+          <div className="assistant-panel__message assistant-panel__message--assistant assistant-panel__message--action">
+            <div>{pendingAction.summary}</div>
+            <div className="assistant-panel__action-row">
+              <button
+                type="button"
+                className="btn btn--primary btn--small"
+                onClick={() => void confirmAction()}
+                disabled={isLoading}
+              >
+                {pendingAction.confirmLabel}
+              </button>
+              <button
+                type="button"
+                className="btn btn--secondary btn--small"
+                onClick={() => void cancelAction()}
+                disabled={isLoading}
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {isLoading ? (
-          <div className="assistant-panel__message assistant-panel__message--assistant">
-            טוען תשובה...
+          <div className="assistant-panel__message assistant-panel__message--assistant assistant-panel__message--loading">
+            בודק את הנתונים של הדירה...
           </div>
         ) : null}
 
         <div ref={messagesEndRef} aria-hidden="true" />
       </div>
 
-      <div className="assistant-panel__suggestions">
-        {suggestions.map((suggestion) => (
+      <div className="assistant-panel__quick">
+        {quickQuestions.map((suggestion) => (
           <button
             key={suggestion}
             type="button"
@@ -98,7 +124,7 @@ export function AssistantPanel() {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           className="field__input"
-          placeholder="למשל: מה צריך לקנות עכשיו?"
+          placeholder="למשל: תרשום ששילמתי 400 לתומר"
         />
         <button type="submit" className="btn btn--primary" disabled={isLoading || !draft.trim()}>
           שלח

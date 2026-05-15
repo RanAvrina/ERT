@@ -134,18 +134,14 @@ export function ShoppingItemStatusActionChip({
 
 export const ticketLabels: Record<TicketStatus, string> = {
   open: 'פתוח',
-  sent_to_landlord: 'הועבר לבעל הדירה',
   in_progress: 'בטיפול',
   closed: 'סגור',
-  cancelled: 'מבוטל',
 }
 
 const ticketTone: Record<TicketStatus, ChipTone> = {
   open: 'primary',
-  sent_to_landlord: 'warning',
   in_progress: 'warning',
   closed: 'success',
-  cancelled: 'muted',
 }
 
 export function TicketStatusChip({ status }: { status: TicketStatus }) {

@@ -17,12 +17,10 @@ interface TicketEditFormState {
 
 const ticketCategoryOptions: TicketCategory[] = ['תקלה', 'בקשה', 'כספים', 'אחר']
 
-const ticketStatusCycle: TicketStatus[] = [
+const ticketStatusOptions: TicketStatus[] = [
   'open',
-  'sent_to_landlord',
   'in_progress',
   'closed',
-  'cancelled',
 ]
 
 function formatTicketDateTime(value: string) {
@@ -58,6 +56,7 @@ export function TicketDetailPage() {
   const [actionError, setActionError] = useState('')
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false)
   const isLandlord = user?.role === 'landlord'
+  const canManageStatus = isLandlord || user?.role === 'admin'
 
   if (!ticket || ticket.apartment_id !== apartmentId) {
     return (
@@ -172,40 +171,40 @@ export function TicketDetailPage() {
       <div className="page__head page__head--ticket">
         <h1 className="page__title">{currentTicket.title}</h1>
         <div className="ticket-status">
-          {isLandlord ? (
-            <div className="inline-status-menu">
-              <TicketStatusActionChip
-                status={currentTicket.status}
-                onClick={() => setIsStatusMenuOpen((currentValue) => !currentValue)}
-              />
-              {isStatusMenuOpen ? (
-                <div className="inline-status-menu__panel">
-                  {ticketStatusCycle.map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      className={`inline-status-menu__option${
-                        status === currentTicket.status ? ' inline-status-menu__option--active' : ''
-                      }`}
-                      onClick={() => void handleStatusChange(status)}
-                    >
-                      {ticketLabels[status]}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <TicketStatusChip status={currentTicket.status} />
-          )}
-          {isLandlord ? <span className="ticket-status__hint">לחיצה על הסטטוס פותחת אפשרויות</span> : null}
+          <TicketStatusChip status={currentTicket.status} />
         </div>
       </div>
 
       <Card
         title="פרטי הפנייה"
+        className="ticket-detail-card status-menu-card"
         action={
-          isLandlord ? null : (
+          canManageStatus ? (
+            <div className="roommate-actions">
+              <div className="inline-status-menu">
+                <TicketStatusActionChip
+                  status={currentTicket.status}
+                  onClick={() => setIsStatusMenuOpen((currentValue) => !currentValue)}
+                />
+                {isStatusMenuOpen ? (
+                  <div className="inline-status-menu__panel">
+                    {ticketStatusOptions.map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        className={`inline-status-menu__option${
+                          status === currentTicket.status ? ' inline-status-menu__option--active' : ''
+                        }`}
+                        onClick={() => void handleStatusChange(status)}
+                      >
+                        {ticketLabels[status]}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
             <div className="roommate-actions">
               <button type="button" className="btn btn--secondary btn--small" onClick={openEditModal}>
                 עריכה
@@ -247,27 +246,27 @@ export function TicketDetailPage() {
             })}
           </ul>
         )}
-        {isLandlord ? (
-          <form className="comment-form" onSubmit={handleCommentSubmit} noValidate>
-            <label className="field">
-              <span className="field__label">עדכון חדש</span>
-              <textarea
-                className="field__input comment-form__textarea"
-                value={commentText}
-                onChange={(event) => setCommentText(event.target.value)}
-                placeholder="כתבו תגובה קצרה לדיירים"
-              />
-            </label>
-            {commentError ? (
-              <p className="form-message form-message--error">{commentError}</p>
-            ) : null}
-            <div className="comment-form__actions">
-              <button type="submit" className="btn btn--primary">
-                שליחת עדכון
-              </button>
-            </div>
-          </form>
-        ) : null}
+        <form className="comment-form" onSubmit={handleCommentSubmit} noValidate>
+          <label className="field">
+            <span className="field__label">הערה חדשה</span>
+            <textarea
+              className="field__input comment-form__textarea"
+              value={commentText}
+              onChange={(event) => setCommentText(event.target.value)}
+              placeholder={
+                canManageStatus ? 'כתבו עדכון לדיירים' : 'כתבו הערה או עדכון לבעל הדירה'
+              }
+            />
+          </label>
+          {commentError ? (
+            <p className="form-message form-message--error">{commentError}</p>
+          ) : null}
+          <div className="comment-form__actions">
+            <button type="submit" className="btn btn--primary">
+              שליחת הודעה
+            </button>
+          </div>
+        </form>
       </Card>
 
       <Card title="קבצים מצורפים">

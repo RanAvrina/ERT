@@ -61,6 +61,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   const { current } = useApartment()
   const [tasks, setTasks] = useTasksStore()
   const nextTaskId = useRef(Math.max(...tasks.map((item) => item.id), 0) + 1)
+  const nextTempTaskId = useRef(-1)
   const loadedApartmentIdRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -93,9 +94,23 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   }, [current?.apartment.id, setTasks])
 
   const addTask = useCallback(
-    async (task: NewTaskInput) => {
+    (task: NewTaskInput) => {
       if (isSupabaseConfigured) {
-        const nextTask = await createTaskViaApi({
+        const optimisticTask: Task = {
+          id: nextTempTaskId.current,
+          apartment_id: task.apartment_id,
+          title: task.title,
+          description: null,
+          assignee_id: task.assignee_id,
+          due_date: task.due_date,
+          status: task.status,
+          created_by: task.created_by,
+        }
+        nextTempTaskId.current -= 1
+
+        setTasks((currentTasks) => [optimisticTask, ...currentTasks])
+
+        void createTaskViaApi({
           apartmentId: task.apartment_id,
           title: task.title,
           description: null,
@@ -103,10 +118,26 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           dueDate: task.due_date,
           status: task.status,
         })
+          .then((nextTask) => {
+            if (!nextTask) {
+              setTasks((currentTasks) =>
+                currentTasks.filter((item) => item.id !== optimisticTask.id),
+              )
+              return
+            }
 
-        if (!nextTask) return null
-        setTasks((currentTasks) => [nextTask, ...currentTasks.filter((item) => item.id !== nextTask.id)])
-        return nextTask
+            setTasks((currentTasks) =>
+              currentTasks.map((item) => (item.id === optimisticTask.id ? nextTask : item)),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to create task.', error)
+            setTasks((currentTasks) =>
+              currentTasks.filter((item) => item.id !== optimisticTask.id),
+            )
+          })
+
+        return Promise.resolve(optimisticTask)
       }
 
       const nextTask: Task = {
@@ -121,19 +152,24 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       }
       nextTaskId.current += 1
       setTasks((currentTasks) => [nextTask, ...currentTasks])
-      return nextTask
+      return Promise.resolve(nextTask)
     },
     [setTasks],
   )
 
   const updateTaskStatus = useCallback(
-    async (taskId: number, status: TaskStatus) => {
+    (taskId: number, status: TaskStatus) => {
       const currentTask = tasks.find((task) => task.id === taskId)
-      if (!currentTask) return null
+      if (!currentTask) return Promise.resolve(null)
 
       if (isSupabaseConfigured) {
+        const optimisticTask: Task = { ...currentTask, status }
+        setTasks((currentTasks) =>
+          currentTasks.map((task) => (task.id === taskId ? optimisticTask : task)),
+        )
+
         const apartmentId = current?.apartment.id ?? 0
-        const updatedTask = await updateTaskViaApi({
+        void updateTaskViaApi({
           apartmentId,
           taskId,
           title: currentTask.title,
@@ -142,12 +178,26 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           dueDate: currentTask.due_date,
           status,
         })
+          .then((updatedTask) => {
+            if (!updatedTask) {
+              setTasks((currentTasks) =>
+                currentTasks.map((task) => (task.id === taskId ? currentTask : task)),
+              )
+              return
+            }
 
-        if (!updatedTask) return null
-        setTasks((currentTasks) =>
-          currentTasks.map((task) => (task.id === taskId ? updatedTask : task)),
-        )
-        return updatedTask
+            setTasks((currentTasks) =>
+              currentTasks.map((task) => (task.id === taskId ? updatedTask : task)),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to update task status.', error)
+            setTasks((currentTasks) =>
+              currentTasks.map((task) => (task.id === taskId ? currentTask : task)),
+            )
+          })
+
+        return Promise.resolve(optimisticTask)
       }
 
       let updatedTask: Task | null = null
@@ -158,17 +208,31 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           return updatedTask
         }),
       )
-      return updatedTask
+      return Promise.resolve(updatedTask)
     },
     [current?.apartment.id, setTasks, tasks],
   )
 
   const updateTask = useCallback(
-    async (taskId: number, task: UpdateTaskInput) => {
+    (taskId: number, task: UpdateTaskInput) => {
       if (isSupabaseConfigured) {
         const apartmentId = current?.apartment.id ?? 0
         const currentTask = tasks.find((item) => item.id === taskId)
-        const updatedTask = await updateTaskViaApi({
+        if (!currentTask) return Promise.resolve(null)
+
+        const optimisticTask: Task = {
+          ...currentTask,
+          title: task.title,
+          assignee_id: task.assignee_id,
+          due_date: task.due_date,
+          status: task.status,
+        }
+
+        setTasks((currentTasks) =>
+          currentTasks.map((item) => (item.id === taskId ? optimisticTask : item)),
+        )
+
+        void updateTaskViaApi({
           apartmentId,
           taskId,
           title: task.title,
@@ -177,12 +241,26 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           dueDate: task.due_date,
           status: task.status,
         })
+          .then((updatedTask) => {
+            if (!updatedTask) {
+              setTasks((currentTasks) =>
+                currentTasks.map((item) => (item.id === taskId ? currentTask : item)),
+              )
+              return
+            }
 
-        if (!updatedTask) return null
-        setTasks((currentTasks) =>
-          currentTasks.map((item) => (item.id === taskId ? updatedTask : item)),
-        )
-        return updatedTask
+            setTasks((currentTasks) =>
+              currentTasks.map((item) => (item.id === taskId ? updatedTask : item)),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to update task.', error)
+            setTasks((currentTasks) =>
+              currentTasks.map((item) => (item.id === taskId ? currentTask : item)),
+            )
+          })
+
+        return Promise.resolve(optimisticTask)
       }
 
       let updatedTask: Task | null = null
@@ -201,21 +279,33 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         }),
       )
 
-      return updatedTask
+      return Promise.resolve(updatedTask)
     },
     [current?.apartment.id, setTasks, tasks],
   )
 
   const deleteTask = useCallback(
     async (taskId: number) => {
+      const previousTask = tasks.find((task) => task.id === taskId)
       if (isSupabaseConfigured) {
         const apartmentId = current?.apartment.id ?? 0
-        await deleteTaskViaApi(apartmentId, taskId)
+        setTasks((currentTasks) => currentTasks.filter((task) => task.id !== taskId))
+
+        try {
+          await deleteTaskViaApi(apartmentId, taskId)
+          return
+        } catch (error) {
+          console.error('Failed to delete task.', error)
+          if (previousTask) {
+            setTasks((currentTasks) => [previousTask, ...currentTasks])
+          }
+          throw error
+        }
       }
 
       setTasks((currentTasks) => currentTasks.filter((task) => task.id !== taskId))
     },
-    [current?.apartment.id, setTasks],
+    [current?.apartment.id, setTasks, tasks],
   )
 
   const value = useMemo(

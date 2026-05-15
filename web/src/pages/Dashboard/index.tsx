@@ -131,7 +131,7 @@ export function DashboardPage() {
   )
   const apartmentTickets = tickets.filter((ticket) => ticket.apartment_id === apartmentId)
   const openTickets = apartmentTickets.filter(
-    (ticket) => ticket.status !== 'closed' && ticket.status !== 'cancelled',
+    (ticket) => ticket.status !== 'closed',
   )
   const apartmentShoppingItems = shoppingItems.filter(
     (item) => (item.apartment_id ?? apartmentId) === apartmentId,

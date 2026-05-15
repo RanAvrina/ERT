@@ -61,6 +61,17 @@ function mapShoppingItem(row: ShoppingItemRow, membershipToAccount: Map<number, 
   }
 }
 
+async function getShoppingItemById(itemId: number, membershipToAccount: Map<number, number>) {
+  const { data, error } = await supabaseAdmin
+    .from('shopping_items')
+    .select('*')
+    .eq('id', itemId)
+    .single()
+
+  if (error) throw new Error(`Failed to load shopping item: ${error.message}`)
+  return mapShoppingItem(data as ShoppingItemRow, membershipToAccount)
+}
+
 async function ensureDefaultShoppingList(apartmentId: number, actorAccountId: number) {
   const { accountToMembership } = await loadMembershipMaps(apartmentId)
   const createdByMembershipId = requireMembershipId(accountToMembership, actorAccountId, 'the shopping list creator')
@@ -115,7 +126,7 @@ export async function createShoppingItem(input: {
   category: string | null
   status: ShoppingItemRow['status']
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const addedByMembershipId = requireMembershipId(accountToMembership, input.actorAccountId, 'the shopping item creator')
   const shoppingListId = await ensureDefaultShoppingList(input.apartmentId, input.actorAccountId)
   const isPurchased = input.status === 'purchased'
@@ -138,8 +149,7 @@ export async function createShoppingItem(input: {
 
   if (error) throw new Error(`Failed to create shopping item: ${error.message}`)
   const row = data as ShoppingItemRow
-  const items = await listShoppingItemsByApartmentId(input.apartmentId)
-  return items.find((item) => item.id === row.id) ?? null
+  return getShoppingItemById(row.id, membershipToAccount)
 }
 
 export async function updateShoppingItem(input: {
@@ -153,7 +163,7 @@ export async function updateShoppingItem(input: {
   purchasedByAccountId: number | null
   purchasedAt: string | null
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const purchasedByMembershipId =
     input.status === 'purchased'
       ? requireMembershipId(accountToMembership, input.purchasedByAccountId ?? input.actorAccountId, 'the purchasing account')
@@ -173,8 +183,7 @@ export async function updateShoppingItem(input: {
     .eq('id', input.itemId)
 
   if (error) throw new Error(`Failed to update shopping item: ${error.message}`)
-  const items = await listShoppingItemsByApartmentId(input.apartmentId)
-  return items.find((item) => item.id === input.itemId) ?? null
+  return getShoppingItemById(input.itemId, membershipToAccount)
 }
 
 export async function deleteShoppingItem(itemId: number) {

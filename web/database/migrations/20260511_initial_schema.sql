@@ -161,7 +161,7 @@ create table if not exists maintenance_tickets (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint maintenance_tickets_category_check check (category in ('issue', 'request', 'finance', 'other')),
-  constraint maintenance_tickets_status_check check (status in ('open', 'sent_to_landlord', 'in_progress', 'closed', 'cancelled'))
+  constraint maintenance_tickets_status_check check (status in ('open', 'in_progress', 'closed'))
 );
 
 create table if not exists ticket_comments (

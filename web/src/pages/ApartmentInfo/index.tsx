@@ -84,6 +84,7 @@ export function ApartmentInfoPage() {
   const [detailsError, setDetailsError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const loadedApartmentIdRef = useRef<number | null>(null)
+  const nextTempItemId = useRef(-1)
 
   useEffect(() => {
     let cancelled = false
@@ -214,55 +215,106 @@ export function ApartmentInfoPage() {
 
     try {
       if (editingItem) {
-        const updatedItem = isSupabaseConfigured
-          ? await updateApartmentInfoItemViaApi({
-              ...normalizedInput,
-              itemId: editingItem.id,
-            })
-          : {
-              ...editingItem,
-              title: normalizedInput.title,
-              category_label: normalizedInput.categoryLabel,
-              provider: normalizedInput.provider,
-              meter_number: normalizedInput.meterNumber,
-              account_number: normalizedInput.accountNumber,
-              phone: normalizedInput.phone,
-              notes: normalizedInput.notes,
-              attachments,
-              updated_at: new Date().toISOString(),
-            }
-
-        if (updatedItem) {
-          setItems((currentItems) =>
-            currentItems.map((item) => (item.id === editingItem.id ? updatedItem : item)),
-          )
-          setSelectedItem(updatedItem)
+        const optimisticItem: ApartmentInfoItem = {
+          ...editingItem,
+          title: normalizedInput.title,
+          category_label: normalizedInput.categoryLabel,
+          provider: normalizedInput.provider,
+          meter_number: normalizedInput.meterNumber,
+          account_number: normalizedInput.accountNumber,
+          phone: normalizedInput.phone,
+          notes: normalizedInput.notes,
+          attachments,
+          updated_at: new Date().toISOString(),
         }
+
+        setItems((currentItems) =>
+          currentItems.map((item) => (item.id === editingItem.id ? optimisticItem : item)),
+        )
+        setSelectedItem(optimisticItem)
         closeEditor()
+
+        if (isSupabaseConfigured) {
+          void updateApartmentInfoItemViaApi({
+            ...normalizedInput,
+            itemId: editingItem.id,
+          })
+            .then((updatedItem) => {
+              if (!updatedItem) {
+                setItems((currentItems) =>
+                  currentItems.map((item) => (item.id === editingItem.id ? editingItem : item)),
+                )
+                setSelectedItem((currentItem) =>
+                  currentItem?.id === editingItem.id ? editingItem : currentItem,
+                )
+                return
+              }
+
+              setItems((currentItems) =>
+                currentItems.map((item) => (item.id === editingItem.id ? updatedItem : item)),
+              )
+              setSelectedItem((currentItem) =>
+                currentItem?.id === editingItem.id ? updatedItem : currentItem,
+              )
+            })
+            .catch((submitError) => {
+              console.error('Failed to update apartment info item.', submitError)
+              setItems((currentItems) =>
+                currentItems.map((item) => (item.id === editingItem.id ? editingItem : item)),
+              )
+              setSelectedItem((currentItem) =>
+                currentItem?.id === editingItem.id ? editingItem : currentItem,
+              )
+            })
+        }
+
         return
       }
 
-      const createdItem = isSupabaseConfigured
-        ? await createApartmentInfoItemViaApi(normalizedInput)
-        : {
-            id: Date.now(),
-            apartment_id: apartmentId,
-            title: normalizedInput.title,
-            category_label: normalizedInput.categoryLabel,
-            provider: normalizedInput.provider,
-            meter_number: normalizedInput.meterNumber,
-            account_number: normalizedInput.accountNumber,
-            phone: normalizedInput.phone,
-            notes: normalizedInput.notes,
-            attachments,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }
-
-      if (createdItem) {
-        setItems((currentItems) => [createdItem, ...currentItems])
+      const optimisticItem: ApartmentInfoItem = {
+        id: isSupabaseConfigured ? nextTempItemId.current : Date.now(),
+        apartment_id: apartmentId,
+        title: normalizedInput.title,
+        category_label: normalizedInput.categoryLabel,
+        provider: normalizedInput.provider,
+        meter_number: normalizedInput.meterNumber,
+        account_number: normalizedInput.accountNumber,
+        phone: normalizedInput.phone,
+        notes: normalizedInput.notes,
+        attachments,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }
+
+      if (isSupabaseConfigured) {
+        nextTempItemId.current -= 1
+      }
+
+      setItems((currentItems) => [optimisticItem, ...currentItems])
       closeEditor()
+
+      if (isSupabaseConfigured) {
+        void createApartmentInfoItemViaApi(normalizedInput)
+          .then((createdItem) => {
+            if (!createdItem) {
+              setItems((currentItems) =>
+                currentItems.filter((item) => item.id !== optimisticItem.id),
+              )
+              return
+            }
+
+            setItems((currentItems) =>
+              currentItems.map((item) => (item.id === optimisticItem.id ? createdItem : item)),
+            )
+          })
+          .catch((submitError) => {
+            console.error('Failed to create apartment info item.', submitError)
+            setItems((currentItems) =>
+              currentItems.filter((item) => item.id !== optimisticItem.id),
+            )
+          })
+        return
+      }
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'שמירת הפריט נכשלה.')
     }

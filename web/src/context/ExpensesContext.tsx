@@ -24,6 +24,7 @@ import {
 } from '../data/server/financeApi'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
+import { ASSISTANT_DATA_CHANGED_EVENT } from './AssistantContext'
 import type { Expense, Payment } from '../types/models'
 
 interface NewExpenseInput {
@@ -155,6 +156,8 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
   const [payments, setPayments] = usePaymentsStore()
   const nextExpenseId = useRef(Math.max(...expenses.map((expense) => expense.id), 0) + 1)
   const nextPaymentId = useRef(Math.max(...payments.map((payment) => payment.id), 0) + 1)
+  const nextTempExpenseId = useRef(-1)
+  const nextTempPaymentId = useRef(-1)
   const loadedApartmentIdRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -193,10 +196,52 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
     }
   }, [current?.apartment.id, setExpenses, setPayments])
 
+  useEffect(() => {
+    const apartmentId: number | null = current?.apartment.id ?? null
+    if (!isSupabaseConfigured || !apartmentId) return
+    const resolvedApartmentId = apartmentId
+
+    async function refreshFinance() {
+      try {
+        const [nextExpenses, nextPayments] = await Promise.all([
+          listExpensesViaApi(resolvedApartmentId),
+          listPaymentsViaApi(resolvedApartmentId),
+        ])
+        setExpenses(nextExpenses)
+        setPayments(nextPayments)
+        nextExpenseId.current = Math.max(...nextExpenses.map((expense) => expense.id), 0) + 1
+        nextPaymentId.current = Math.max(...nextPayments.map((payment) => payment.id), 0) + 1
+        loadedApartmentIdRef.current = resolvedApartmentId
+      } catch (error) {
+        console.error('Failed to refresh finance after assistant action.', error)
+      }
+    }
+
+    function handleAssistantDataChanged(event: Event) {
+      const customEvent = event as CustomEvent<{ apartmentId?: number }>
+      if (customEvent.detail?.apartmentId !== resolvedApartmentId) return
+      void refreshFinance()
+    }
+
+    window.addEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
+    return () => {
+      window.removeEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
+    }
+  }, [current?.apartment.id, setExpenses, setPayments])
+
   const addExpense = useCallback(
-    async (expense: NewExpenseInput) => {
+    (expense: NewExpenseInput) => {
       if (isSupabaseConfigured) {
-        const nextExpense = await createExpenseViaApi({
+        const optimisticExpense: Expense = {
+          id: nextTempExpenseId.current,
+          status: 'active',
+          ...expense,
+        }
+        nextTempExpenseId.current -= 1
+
+        setExpenses((currentExpenses) => [optimisticExpense, ...currentExpenses])
+
+        void createExpenseViaApi({
           apartmentId: expense.apartment_id,
           paidByAccountId: expense.paid_by,
           amount: expense.amount,
@@ -205,10 +250,28 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           date: expense.date,
           participantAccountIds: expense.participant_ids,
         })
+          .then((nextExpense) => {
+            if (!nextExpense) {
+              setExpenses((currentExpenses) =>
+                currentExpenses.filter((item) => item.id !== optimisticExpense.id),
+              )
+              return
+            }
 
-        if (!nextExpense) return null
-        setExpenses((currentExpenses) => [nextExpense, ...currentExpenses.filter((item) => item.id !== nextExpense.id)])
-        return nextExpense
+            setExpenses((currentExpenses) =>
+              currentExpenses.map((item) =>
+                item.id === optimisticExpense.id ? nextExpense : item,
+              ),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to create expense.', error)
+            setExpenses((currentExpenses) =>
+              currentExpenses.filter((item) => item.id !== optimisticExpense.id),
+            )
+          })
+
+        return Promise.resolve(optimisticExpense)
       }
 
       const nextExpense: Expense = {
@@ -218,15 +281,24 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
       }
       nextExpenseId.current += 1
       setExpenses((currentExpenses) => [nextExpense, ...currentExpenses])
-      return nextExpense
+      return Promise.resolve(nextExpense)
     },
     [setExpenses],
   )
 
   const addPayment = useCallback(
-    async (payment: NewPaymentInput) => {
+    (payment: NewPaymentInput) => {
       if (isSupabaseConfigured) {
-        const nextPayment = await createPaymentViaApi({
+        const optimisticPayment: Payment = {
+          id: nextTempPaymentId.current,
+          status: 'recorded',
+          ...payment,
+        }
+        nextTempPaymentId.current -= 1
+
+        setPayments((currentPayments) => [optimisticPayment, ...currentPayments])
+
+        void createPaymentViaApi({
           apartmentId: payment.apartment_id,
           payerAccountId: payment.payer_id,
           payeeAccountId: payment.payee_id,
@@ -234,10 +306,28 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           paymentDate: payment.created_at,
           note: payment.note ?? null,
         })
+          .then((nextPayment) => {
+            if (!nextPayment) {
+              setPayments((currentPayments) =>
+                currentPayments.filter((item) => item.id !== optimisticPayment.id),
+              )
+              return
+            }
 
-        if (!nextPayment) return null
-        setPayments((currentPayments) => [nextPayment, ...currentPayments.filter((item) => item.id !== nextPayment.id)])
-        return nextPayment
+            setPayments((currentPayments) =>
+              currentPayments.map((item) =>
+                item.id === optimisticPayment.id ? nextPayment : item,
+              ),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to create payment.', error)
+            setPayments((currentPayments) =>
+              currentPayments.filter((item) => item.id !== optimisticPayment.id),
+            )
+          })
+
+        return Promise.resolve(optimisticPayment)
       }
 
       const nextPayment: Payment = {
@@ -247,16 +337,28 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
       }
       nextPaymentId.current += 1
       setPayments((currentPayments) => [nextPayment, ...currentPayments])
-      return nextPayment
+      return Promise.resolve(nextPayment)
     },
     [setPayments],
   )
 
   const updatePayment = useCallback(
-    async (paymentId: number, payment: UpdatePaymentInput) => {
+    (paymentId: number, payment: UpdatePaymentInput) => {
       if (isSupabaseConfigured) {
+        const previousPayment = payments.find((item) => item.id === paymentId)
+        if (!previousPayment) return Promise.resolve(null)
+
+        const optimisticPayment: Payment = {
+          ...previousPayment,
+          ...payment,
+        }
+
+        setPayments((currentPayments) =>
+          currentPayments.map((item) => (item.id === paymentId ? optimisticPayment : item)),
+        )
+
         const apartmentId = current?.apartment.id ?? 0
-        const updatedPayment = await updatePaymentViaApi({
+        void updatePaymentViaApi({
           paymentId,
           apartmentId,
           payerAccountId: payment.payer_id,
@@ -265,12 +367,26 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           paymentDate: payment.created_at,
           note: payment.note ?? null,
         })
+          .then((updatedPayment) => {
+            if (!updatedPayment) {
+              setPayments((currentPayments) =>
+                currentPayments.map((item) => (item.id === paymentId ? previousPayment : item)),
+              )
+              return
+            }
 
-        if (!updatedPayment) return null
-        setPayments((currentPayments) =>
-          currentPayments.map((item) => (item.id === paymentId ? updatedPayment : item)),
-        )
-        return updatedPayment
+            setPayments((currentPayments) =>
+              currentPayments.map((item) => (item.id === paymentId ? updatedPayment : item)),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to update payment.', error)
+            setPayments((currentPayments) =>
+              currentPayments.map((item) => (item.id === paymentId ? previousPayment : item)),
+            )
+          })
+
+        return Promise.resolve(optimisticPayment)
       }
 
       let updatedPayment: Payment | null = null
@@ -281,16 +397,28 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           return updatedPayment
         }),
       )
-      return updatedPayment
+      return Promise.resolve(updatedPayment)
     },
-    [current?.apartment.id, setPayments],
+    [current?.apartment.id, payments, setPayments],
   )
 
   const updateExpense = useCallback(
-    async (expenseId: number, expense: UpdateExpenseInput) => {
+    (expenseId: number, expense: UpdateExpenseInput) => {
       if (isSupabaseConfigured) {
+        const previousExpense = expenses.find((item) => item.id === expenseId)
+        if (!previousExpense) return Promise.resolve(null)
+
+        const optimisticExpense: Expense = {
+          ...previousExpense,
+          ...expense,
+        }
+
+        setExpenses((currentExpenses) =>
+          currentExpenses.map((item) => (item.id === expenseId ? optimisticExpense : item)),
+        )
+
         const apartmentId = current?.apartment.id ?? 0
-        const updatedExpense = await updateExpenseViaApi({
+        void updateExpenseViaApi({
           expenseId,
           apartmentId,
           paidByAccountId: expense.paid_by,
@@ -300,12 +428,26 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           date: expense.date,
           participantAccountIds: expense.participant_ids,
         })
+          .then((updatedExpense) => {
+            if (!updatedExpense) {
+              setExpenses((currentExpenses) =>
+                currentExpenses.map((item) => (item.id === expenseId ? previousExpense : item)),
+              )
+              return
+            }
 
-        if (!updatedExpense) return null
-        setExpenses((currentExpenses) =>
-          currentExpenses.map((item) => (item.id === expenseId ? updatedExpense : item)),
-        )
-        return updatedExpense
+            setExpenses((currentExpenses) =>
+              currentExpenses.map((item) => (item.id === expenseId ? updatedExpense : item)),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to update expense.', error)
+            setExpenses((currentExpenses) =>
+              currentExpenses.map((item) => (item.id === expenseId ? previousExpense : item)),
+            )
+          })
+
+        return Promise.resolve(optimisticExpense)
       }
 
       let updatedExpense: Expense | null = null
@@ -316,16 +458,36 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           return updatedExpense
         }),
       )
-      return updatedExpense
+      return Promise.resolve(updatedExpense)
     },
-    [current?.apartment.id, setExpenses],
+    [current?.apartment.id, expenses, setExpenses],
   )
 
   const deleteExpense = useCallback(
     async (expenseId: number) => {
+      const previousExpense = expenses.find((expense) => expense.id === expenseId)
       if (isSupabaseConfigured) {
         const apartmentId = current?.apartment.id ?? 0
-        await deleteExpenseViaApi(apartmentId, expenseId)
+        setExpenses((currentExpenses) =>
+          currentExpenses.map((expense) =>
+            expense.id === expenseId ? { ...expense, status: 'deleted' } : expense,
+          ),
+        )
+
+        try {
+          await deleteExpenseViaApi(apartmentId, expenseId)
+          return
+        } catch (error) {
+          console.error('Failed to delete expense.', error)
+          if (previousExpense) {
+            setExpenses((currentExpenses) =>
+              currentExpenses.map((expense) =>
+                expense.id === expenseId ? previousExpense : expense,
+              ),
+            )
+          }
+          throw error
+        }
       }
 
       setExpenses((currentExpenses) =>
@@ -334,14 +496,34 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
         ),
       )
     },
-    [current?.apartment.id, setExpenses],
+    [current?.apartment.id, expenses, setExpenses],
   )
 
   const deletePayment = useCallback(
     async (paymentId: number) => {
+      const previousPayment = payments.find((payment) => payment.id === paymentId)
       if (isSupabaseConfigured) {
         const apartmentId = current?.apartment.id ?? 0
-        await deletePaymentViaApi(apartmentId, paymentId)
+        setPayments((currentPayments) =>
+          currentPayments.map((payment) =>
+            payment.id === paymentId ? { ...payment, status: 'cancelled' } : payment,
+          ),
+        )
+
+        try {
+          await deletePaymentViaApi(apartmentId, paymentId)
+          return
+        } catch (error) {
+          console.error('Failed to delete payment.', error)
+          if (previousPayment) {
+            setPayments((currentPayments) =>
+              currentPayments.map((payment) =>
+                payment.id === paymentId ? previousPayment : payment,
+              ),
+            )
+          }
+          throw error
+        }
       }
 
       setPayments((currentPayments) =>
@@ -350,7 +532,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
         ),
       )
     },
-    [current?.apartment.id, setPayments],
+    [current?.apartment.id, payments, setPayments],
   )
 
   const { netBalanceByUser, settlements } = useMemo(

@@ -23,7 +23,7 @@ const ticketBodySchema = z.object({
 })
 
 const statusBodySchema = z.object({
-  status: z.enum(['open', 'sent_to_landlord', 'in_progress', 'closed', 'cancelled']),
+  status: z.enum(['open', 'in_progress', 'closed']),
 })
 
 const commentBodySchema = z.object({

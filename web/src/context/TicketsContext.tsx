@@ -73,6 +73,8 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
   const [comments, setComments] = useTicketCommentsStore()
   const nextTicketId = useRef(Math.max(...tickets.map((ticket) => ticket.id), 0) + 1)
   const nextCommentId = useRef(Math.max(...comments.map((comment) => comment.id), 0) + 1)
+  const nextTempTicketId = useRef(-1)
+  const nextTempCommentId = useRef(-1)
   const loadedApartmentIdRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -112,20 +114,48 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
 
   async function addTicket(input: NewTicketInput) {
     if (isSupabaseConfigured) {
-      const ticket = await createTicketViaApi({
+      const optimisticTicket: TicketWithAttachmentsApi = {
+        id: nextTempTicketId.current,
+        apartment_id: input.apartmentId,
+        title: input.title,
+        description: input.description,
+        category: input.category,
+        status: 'open',
+        created_by: input.createdBy,
+        created_at: new Date().toISOString(),
+        attachments: input.attachments,
+      }
+      nextTempTicketId.current -= 1
+
+      setTickets((currentTickets) => [optimisticTicket, ...currentTickets])
+
+      void createTicketViaApi({
         apartmentId: input.apartmentId,
         title: input.title,
         description: input.description,
         category: input.category,
         attachments: input.attachments,
       })
+        .then((ticket) => {
+          if (!ticket) {
+            setTickets((currentTickets) =>
+              currentTickets.filter((item) => item.id !== optimisticTicket.id),
+            )
+            return
+          }
 
-      if (!ticket) return null
-      setTickets((currentTickets) => [
-        ticket,
-        ...currentTickets.filter((item) => item.id !== ticket.id),
-      ])
-      return ticket
+          setTickets((currentTickets) =>
+            currentTickets.map((item) => (item.id === optimisticTicket.id ? ticket : item)),
+          )
+        })
+        .catch((error) => {
+          console.error('Failed to create ticket.', error)
+          setTickets((currentTickets) =>
+            currentTickets.filter((item) => item.id !== optimisticTicket.id),
+          )
+        })
+
+      return optimisticTicket
     }
 
     const ticket: TicketWithAttachments = {
@@ -147,17 +177,35 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
 
   async function addComment(ticketId: number, userId: number, text: string) {
     if (isSupabaseConfigured) {
+      const optimisticComment: TicketComment = {
+        id: nextTempCommentId.current,
+        ticket_id: ticketId,
+        user_id: userId,
+        comment_text: text.trim(),
+        created_at: new Date().toISOString(),
+      }
+      nextTempCommentId.current -= 1
+
+      setComments((currentComments) => [optimisticComment, ...currentComments])
+
       const apartmentId = current?.apartment.id ?? 0
-      const created = await createTicketCommentViaApi({
+      void createTicketCommentViaApi({
         apartmentId,
         ticketId,
         text: text.trim(),
       })
-      setComments((currentComments) => [
-        created,
-        ...currentComments.filter((item) => item.id !== created.id),
-      ])
-      return created
+        .then((created) => {
+          setComments((currentComments) =>
+            currentComments.map((item) => (item.id === optimisticComment.id ? created : item)),
+          )
+        })
+        .catch((error) => {
+          console.error('Failed to create ticket comment.', error)
+          setComments((currentComments) =>
+            currentComments.filter((item) => item.id !== optimisticComment.id),
+          )
+        })
+      return optimisticComment
     }
 
     const created: TicketComment = {
@@ -176,7 +224,20 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
     if (isSupabaseConfigured) {
       const apartmentId = current?.apartment.id ?? 0
       const currentTicket = tickets.find((ticket) => ticket.id === ticketId)
-      const updatedTicket = await updateTicketViaApi({
+      if (!currentTicket) return null
+
+      const optimisticTicket: TicketWithAttachmentsApi = {
+        ...currentTicket,
+        title: input.title,
+        description: input.description,
+        category: input.category,
+      }
+
+      setTickets((currentTickets) =>
+        currentTickets.map((ticket) => (ticket.id === ticketId ? optimisticTicket : ticket)),
+      )
+
+      void updateTicketViaApi({
         apartmentId,
         ticketId,
         title: input.title,
@@ -184,12 +245,25 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
         category: input.category,
         attachments: currentTicket?.attachments,
       })
+        .then((updatedTicket) => {
+          if (!updatedTicket) {
+            setTickets((currentTickets) =>
+              currentTickets.map((ticket) => (ticket.id === ticketId ? currentTicket : ticket)),
+            )
+            return
+          }
 
-      if (!updatedTicket) return null
-      setTickets((currentTickets) =>
-        currentTickets.map((ticket) => (ticket.id === ticketId ? updatedTicket : ticket)),
-      )
-      return updatedTicket
+          setTickets((currentTickets) =>
+            currentTickets.map((ticket) => (ticket.id === ticketId ? updatedTicket : ticket)),
+          )
+        })
+        .catch((error) => {
+          console.error('Failed to update ticket.', error)
+          setTickets((currentTickets) =>
+            currentTickets.map((ticket) => (ticket.id === ticketId ? currentTicket : ticket)),
+          )
+        })
+      return optimisticTicket
     }
 
     let updatedTicket: TicketWithAttachments | null = null
@@ -211,9 +285,28 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
   }
 
   async function deleteTicket(ticketId: number) {
+    const previousTicket = tickets.find((ticket) => ticket.id === ticketId)
+    const previousComments = comments.filter((comment) => comment.ticket_id === ticketId)
     if (isSupabaseConfigured) {
       const apartmentId = current?.apartment.id ?? 0
-      await deleteTicketViaApi(apartmentId, ticketId)
+      setTickets((currentTickets) => currentTickets.filter((ticket) => ticket.id !== ticketId))
+      setComments((currentComments) =>
+        currentComments.filter((comment) => comment.ticket_id !== ticketId),
+      )
+
+      try {
+        await deleteTicketViaApi(apartmentId, ticketId)
+        return
+      } catch (error) {
+        console.error('Failed to delete ticket.', error)
+        if (previousTicket) {
+          setTickets((currentTickets) => [previousTicket, ...currentTickets])
+        }
+        if (previousComments.length > 0) {
+          setComments((currentComments) => [...previousComments, ...currentComments])
+        }
+        throw error
+      }
     }
 
     setTickets((currentTickets) => currentTickets.filter((ticket) => ticket.id !== ticketId))
@@ -224,18 +317,39 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
 
   async function updateTicketStatus(ticketId: number, status: TicketStatus) {
     if (isSupabaseConfigured) {
+      const currentTicket = tickets.find((ticket) => ticket.id === ticketId)
+      if (!currentTicket) return null
+
+      const optimisticTicket: TicketWithAttachmentsApi = { ...currentTicket, status }
+      setTickets((currentTickets) =>
+        currentTickets.map((ticket) => (ticket.id === ticketId ? optimisticTicket : ticket)),
+      )
+
       const apartmentId = current?.apartment.id ?? 0
-      const updatedTicket = await updateTicketStatusViaApi({
+      void updateTicketStatusViaApi({
         apartmentId,
         ticketId,
         status,
       })
+        .then((updatedTicket) => {
+          if (!updatedTicket) {
+            setTickets((currentTickets) =>
+              currentTickets.map((ticket) => (ticket.id === ticketId ? currentTicket : ticket)),
+            )
+            return
+          }
 
-      if (!updatedTicket) return null
-      setTickets((currentTickets) =>
-        currentTickets.map((ticket) => (ticket.id === ticketId ? updatedTicket : ticket)),
-      )
-      return updatedTicket
+          setTickets((currentTickets) =>
+            currentTickets.map((ticket) => (ticket.id === ticketId ? updatedTicket : ticket)),
+          )
+        })
+        .catch((error) => {
+          console.error('Failed to update ticket status.', error)
+          setTickets((currentTickets) =>
+            currentTickets.map((ticket) => (ticket.id === ticketId ? currentTicket : ticket)),
+          )
+        })
+      return optimisticTicket
     }
 
     let updatedTicket: TicketWithAttachments | null = null

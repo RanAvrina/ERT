@@ -18,6 +18,14 @@ export interface TicketWithAttachments extends MaintenanceTicket {
   attachments: TicketAttachment[]
 }
 
+function normalizeTicketStatus(
+  status: MaintenanceTicketRow['status'] | 'sent_to_landlord' | 'cancelled',
+): TicketStatus {
+  if (status === 'sent_to_landlord') return 'in_progress'
+  if (status === 'cancelled') return 'closed'
+  return status
+}
+
 function mapTicketCategoryToDb(category: TicketCategory) {
   switch (category) {
     case 'תקלה':
@@ -73,7 +81,7 @@ function mapTicketRowToModel(
     title: row.title,
     description: row.description,
     category: mapDbCategoryToTicket(row.category),
-    status: row.status,
+    status: normalizeTicketStatus(row.status),
     created_by: membershipToAccount.get(row.created_by_membership_id) ?? 0,
     created_at: row.created_at,
     attachments: attachments.map(mapAttachmentRow),
@@ -101,7 +109,6 @@ export async function listTicketsByApartmentId(apartmentId: number) {
     .from('maintenance_tickets')
     .select('*')
     .eq('apartment_id', apartmentId)
-    .neq('status', 'cancelled')
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
   ensureSupabaseResult(error, 'Failed to load tickets')

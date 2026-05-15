@@ -250,7 +250,7 @@ export const mockTickets: MaintenanceTicket[] = [
     title: 'בקשה להחלפת מנעול',
     description: 'המפתח השני לא מסתובב חלק.',
     category: 'בקשה',
-    status: 'sent_to_landlord',
+    status: 'in_progress',
     created_by: 1,
     created_at: '2026-04-06T11:20:00',
   },

@@ -320,6 +320,11 @@ input {
   padding: 14px 16px 16px;
 }
 
+.card__action {
+  position: relative;
+  overflow: visible;
+}
+
 .muted {
   color: var(--color-text-secondary);
   font-size: 0.9rem;
@@ -1776,6 +1781,15 @@ input {
   font-size: 0.78rem;
 }
 
+.ticket-detail-card,
+.ticket-detail-card .card__head,
+.ticket-detail-card .card__body,
+.ticket-detail-card .roommate-actions,
+.ticket-detail-card .ticket-status,
+.ticket-detail-card .inline-status-menu {
+  overflow: visible;
+}
+
 .ticket-form {
   display: grid;
   gap: 14px;
@@ -1982,6 +1996,21 @@ input {
 .expense-list--cards {
   display: grid;
   gap: 10px;
+}
+
+.expense-list--cards,
+.payment-list--cards,
+.debt-list,
+.task-list--cards,
+.task-list--compact,
+.shop-list--cards,
+.ticket-list--cards,
+.apartment-info-list {
+  max-height: min(56dvh, 540px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline-end: 6px;
+  scrollbar-width: thin;
 }
 
 .expense-list--cards .expense-list__item {
@@ -2965,39 +2994,53 @@ input {
 
 .assistant-launcher {
   position: fixed;
-  left: 20px;
+  right: 20px;
   bottom: 92px;
   z-index: 42;
-  width: 54px;
-  height: 54px;
+  width: 58px;
+  height: 58px;
   border: none;
-  border-radius: 18px;
-  background: linear-gradient(135deg, #2ec4b6 0%, #24b4a7 100%);
+  border-radius: 20px;
+  background: linear-gradient(135deg, #1c355f 0%, #203b6c 100%);
   color: #ffffff;
   font-weight: 800;
   letter-spacing: 0.03em;
-  box-shadow: 0 18px 36px rgba(46, 196, 182, 0.28);
+  box-shadow: 0 18px 36px rgba(20, 36, 67, 0.28);
   cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.assistant-launcher:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 20px 40px rgba(20, 36, 67, 0.32);
 }
 
 .assistant-launcher--active {
-  background: linear-gradient(135deg, #122349 0%, #1d335e 100%);
+  background: linear-gradient(135deg, #2ec4b6 0%, #24b4a7 100%);
+  box-shadow: 0 18px 36px rgba(46, 196, 182, 0.26);
 }
 
 .assistant-panel {
   position: fixed;
-  left: 20px;
-  bottom: 154px;
+  right: 20px;
+  bottom: 164px;
   z-index: 41;
-  width: min(380px, calc(100vw - 32px));
-  max-height: min(72dvh, 620px);
+  width: min(400px, calc(100vw - 24px));
+  height: min(68dvh, 620px);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 12px;
   padding: 16px;
+  overflow: hidden;
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.98);
+  background: rgba(255, 255, 255, 0.985);
   border: 1px solid rgba(15, 23, 42, 0.08);
-  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.16);
+  box-shadow:
+    0 24px 56px rgba(15, 23, 42, 0.16),
+    0 8px 18px rgba(15, 23, 42, 0.06);
 }
 
 .assistant-panel__head {
@@ -3009,70 +3052,97 @@ input {
 
 .assistant-panel__head h2 {
   margin: 0 0 4px;
-  font-size: 1.05rem;
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
 }
 
 .assistant-panel__head p {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.82rem;
+  font-size: 0.84rem;
 }
 
-.assistant-panel__summary {
+.assistant-panel__quick {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.assistant-panel__summary span,
 .assistant-panel__chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 30px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border-radius: 999px;
   background: rgba(46, 196, 182, 0.1);
   color: #0f766e;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 700;
-}
-
-.assistant-panel__suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.assistant-panel__chip {
   border: none;
   cursor: pointer;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.assistant-panel__chip:hover {
+  background: rgba(46, 196, 182, 0.16);
+  transform: translateY(-1px);
 }
 
 .assistant-panel__messages {
-  min-height: 180px;
-  max-height: 260px;
+  min-height: 0;
   overflow: auto;
   display: grid;
-  gap: 8px;
-  padding-inline-end: 4px;
+  align-content: start;
+  gap: 10px;
+  padding: 8px 4px 8px 2px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px solid rgba(15, 23, 42, 0.05);
 }
 
 .assistant-panel__message {
-  padding: 10px 12px;
-  border-radius: 16px;
-  font-size: 0.9rem;
-  line-height: 1.55;
+  max-width: 92%;
+  padding: 12px 14px;
+  border-radius: 18px;
+  font-size: 0.94rem;
+  line-height: 1.65;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.04);
 }
 
 .assistant-panel__message--assistant {
-  background: rgba(15, 23, 42, 0.05);
+  justify-self: start;
+  background: rgba(255, 255, 255, 0.92);
   color: var(--color-text);
+  border-top-right-radius: 8px;
 }
 
 .assistant-panel__message--user {
-  background: rgba(46, 196, 182, 0.14);
+  justify-self: end;
+  background: linear-gradient(180deg, rgba(46, 196, 182, 0.2), rgba(46, 196, 182, 0.14));
   color: #0f766e;
+  border-top-left-radius: 8px;
+}
+
+.assistant-panel__message--loading {
+  color: var(--color-text-secondary);
+}
+
+.assistant-panel__message--intro {
+  max-width: 100%;
+}
+
+.assistant-panel__message--action {
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-panel__action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .assistant-panel__form {
@@ -3083,17 +3153,65 @@ input {
 
 @media (max-width: 640px) {
   .assistant-panel {
-    left: 16px;
-    bottom: 138px;
+    left: 12px;
+    right: 12px;
+    bottom: 84px;
+    width: auto;
+    height: min(72dvh, 640px);
+    gap: 10px;
+    padding: 14px;
+    border-radius: 20px;
   }
 
   .assistant-launcher {
-    left: 16px;
-    bottom: 84px;
+    right: 12px;
+    bottom: 16px;
+    width: 54px;
+    height: 54px;
+    border-radius: 18px;
+  }
+
+  .assistant-panel__head h2 {
+    font-size: 1.05rem;
+  }
+
+  .assistant-panel__head p {
+    font-size: 0.84rem;
+  }
+
+  .assistant-panel__message {
+    max-width: 100%;
+    font-size: 0.9rem;
+  }
+
+  .assistant-panel__chip {
+    min-height: 30px;
+    padding: 5px 10px;
+    font-size: 0.74rem;
+  }
+
+  .assistant-panel__form {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-panel__form .btn {
+    width: 100%;
   }
 }
 
 @media (max-width: 640px) {
+  .expense-list--cards,
+  .payment-list--cards,
+  .debt-list,
+  .task-list--cards,
+  .task-list--compact,
+  .shop-list--cards,
+  .ticket-list--cards,
+  .apartment-info-list {
+    max-height: min(48dvh, 420px);
+    padding-inline-end: 4px;
+  }
+
   .apartment-info-list {
     grid-template-columns: 1fr;
   }

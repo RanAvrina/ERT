@@ -11,6 +11,21 @@ interface MembershipRow {
   joined_at: string
 }
 
+const MEMBERSHIP_CACHE_TTL_MS = 30_000
+
+const membershipsByApartmentCache = new Map<
+  number,
+  { value: MembershipRow[]; expiresAt: number }
+>()
+const membershipByAccountCache = new Map<
+  number,
+  { value: AuthMembership | null; expiresAt: number }
+>()
+const membershipByApartmentAndAccountCache = new Map<
+  string,
+  { value: AuthMembership | null; expiresAt: number }
+>()
+
 function mapMembershipRow(row: MembershipRow): AuthMembership {
   return {
     id: row.id,
@@ -21,7 +36,32 @@ function mapMembershipRow(row: MembershipRow): AuthMembership {
   }
 }
 
+function invalidateMembershipCacheForApartment(apartmentId: number) {
+  membershipsByApartmentCache.delete(apartmentId)
+
+  for (const key of membershipByApartmentAndAccountCache.keys()) {
+    if (key.startsWith(`${apartmentId}:`)) {
+      membershipByApartmentAndAccountCache.delete(key)
+    }
+  }
+}
+
+function invalidateMembershipCacheForAccount(accountId: number) {
+  membershipByAccountCache.delete(accountId)
+
+  for (const key of membershipByApartmentAndAccountCache.keys()) {
+    if (key.endsWith(`:${accountId}`)) {
+      membershipByApartmentAndAccountCache.delete(key)
+    }
+  }
+}
+
 export async function findActiveMembershipByAccountId(accountId: number) {
+  const cached = membershipByAccountCache.get(accountId)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
   const { data, error } = await supabaseAdmin
     .from('apartment_memberships')
     .select('*')
@@ -31,10 +71,21 @@ export async function findActiveMembershipByAccountId(accountId: number) {
     .maybeSingle()
 
   if (error) throw new Error(`Failed to load active membership: ${error.message}`)
-  return data ? mapMembershipRow(data as MembershipRow) : null
+  const result = data ? mapMembershipRow(data as MembershipRow) : null
+  membershipByAccountCache.set(accountId, {
+    value: result,
+    expiresAt: Date.now() + MEMBERSHIP_CACHE_TTL_MS,
+  })
+  return result
 }
 
 export async function findActiveMembershipByApartmentAndAccount(apartmentId: number, accountId: number) {
+  const cacheKey = `${apartmentId}:${accountId}`
+  const cached = membershipByApartmentAndAccountCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
   const { data, error } = await supabaseAdmin
     .from('apartment_memberships')
     .select('*')
@@ -45,10 +96,20 @@ export async function findActiveMembershipByApartmentAndAccount(apartmentId: num
     .maybeSingle()
 
   if (error) throw new Error(`Failed to load apartment membership: ${error.message}`)
-  return data ? mapMembershipRow(data as MembershipRow) : null
+  const result = data ? mapMembershipRow(data as MembershipRow) : null
+  membershipByApartmentAndAccountCache.set(cacheKey, {
+    value: result,
+    expiresAt: Date.now() + MEMBERSHIP_CACHE_TTL_MS,
+  })
+  return result
 }
 
 export async function listActiveMembershipsByApartmentId(apartmentId: number) {
+  const cached = membershipsByApartmentCache.get(apartmentId)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
   const { data, error } = await supabaseAdmin
     .from('apartment_memberships')
     .select('*')
@@ -58,7 +119,12 @@ export async function listActiveMembershipsByApartmentId(apartmentId: number) {
     .order('id', { ascending: true })
 
   if (error) throw new Error(`Failed to load apartment memberships: ${error.message}`)
-  return (data ?? []) as MembershipRow[]
+  const result = (data ?? []) as MembershipRow[]
+  membershipsByApartmentCache.set(apartmentId, {
+    value: result,
+    expiresAt: Date.now() + MEMBERSHIP_CACHE_TTL_MS,
+  })
+  return result
 }
 
 export async function findMembershipById(membershipId: number) {
@@ -90,6 +156,8 @@ export async function createMembership(input: {
     .single()
 
   if (error) throw new Error(`Failed to create membership: ${error.message}`)
+  invalidateMembershipCacheForApartment(input.apartmentId)
+  invalidateMembershipCacheForAccount(input.accountId)
   return mapMembershipRow(data as MembershipRow)
 }
 
@@ -130,6 +198,7 @@ export async function ensureMembership(input: {
 }
 
 export async function deactivateMembership(membershipId: number) {
+  const membership = await findMembershipById(membershipId)
   const { error } = await supabaseAdmin
     .from('apartment_memberships')
     .update({
@@ -139,6 +208,10 @@ export async function deactivateMembership(membershipId: number) {
     .eq('id', membershipId)
 
   if (error) throw new Error(`Failed to deactivate membership: ${error.message}`)
+  if (membership) {
+    invalidateMembershipCacheForApartment(membership.apartmentId)
+    invalidateMembershipCacheForAccount(membership.accountId)
+  }
 }
 
 export async function assertAccountCanReceiveInviteJoin(accountId: number, role: AuthMembership['role']) {

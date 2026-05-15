@@ -48,6 +48,17 @@ function requireMembershipId(map: Map<number, number>, accountId: number, contex
   return membershipId
 }
 
+async function getTaskById(taskId: number, membershipToAccount: Map<number, number>) {
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .select('*')
+    .eq('id', taskId)
+    .single()
+
+  if (error) throw new Error(`Failed to load task: ${error.message}`)
+  return mapTask(data as TaskRow, membershipToAccount)
+}
+
 export async function listTasksByApartmentId(apartmentId: number) {
   const { membershipToAccount } = await loadMembershipMaps(apartmentId)
   const { data, error } = await supabaseAdmin
@@ -70,7 +81,7 @@ export async function createTask(input: {
   status: TaskRow['status']
   createdByAccountId: number
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const createdByMembershipId = requireMembershipId(accountToMembership, input.createdByAccountId, 'the task creator')
   const assigneeMembershipId =
     input.assigneeAccountId == null ? null : requireMembershipId(accountToMembership, input.assigneeAccountId, 'the task assignee')
@@ -91,8 +102,7 @@ export async function createTask(input: {
 
   if (error) throw new Error(`Failed to create task: ${error.message}`)
   const taskRow = data as TaskRow
-  const tasks = await listTasksByApartmentId(input.apartmentId)
-  return tasks.find((task) => task.id === taskRow.id) ?? null
+  return getTaskById(taskRow.id, membershipToAccount)
 }
 
 export async function updateTask(input: {
@@ -104,7 +114,7 @@ export async function updateTask(input: {
   dueDate: string | null
   status: TaskRow['status']
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const assigneeMembershipId =
     input.assigneeAccountId == null ? null : requireMembershipId(accountToMembership, input.assigneeAccountId, 'the task assignee')
 
@@ -121,8 +131,7 @@ export async function updateTask(input: {
     .eq('id', input.taskId)
 
   if (error) throw new Error(`Failed to update task: ${error.message}`)
-  const tasks = await listTasksByApartmentId(input.apartmentId)
-  return tasks.find((task) => task.id === input.taskId) ?? null
+  return getTaskById(input.taskId, membershipToAccount)
 }
 
 export async function deleteTask(taskId: number) {

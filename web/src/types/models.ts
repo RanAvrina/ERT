@@ -96,10 +96,8 @@ export type TicketCategory = 'תקלה' | 'בקשה' | 'כספים' | 'אחר'
 
 export type TicketStatus =
   | 'open'
-  | 'sent_to_landlord'
   | 'in_progress'
   | 'closed'
-  | 'cancelled'
 
 export interface MaintenanceTicket {
   id: number

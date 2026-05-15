@@ -117,6 +117,44 @@ function mapPayment(row: PaymentRow, membershipToAccount: Map<number, number>) {
   }
 }
 
+async function getExpenseById(expenseId: number, membershipToAccount: Map<number, number>) {
+  const { data, error } = await supabaseAdmin
+    .from('expenses')
+    .select('*')
+    .eq('id', expenseId)
+    .single()
+
+  if (error) throw new Error(`Failed to load expense: ${error.message}`)
+  const row = data as ExpenseRow
+
+  const [{ data: participantsData, error: participantsError }, { data: attachmentsData, error: attachmentsError }] =
+    await Promise.all([
+      supabaseAdmin.from('expense_participants').select('*').eq('expense_id', expenseId),
+      supabaseAdmin.from('expense_attachments').select('*').eq('expense_id', expenseId),
+    ])
+
+  if (participantsError) throw new Error(`Failed to load expense participants: ${participantsError.message}`)
+  if (attachmentsError) throw new Error(`Failed to load expense attachments: ${attachmentsError.message}`)
+
+  return mapExpense(
+    row,
+    (participantsData ?? []) as ExpenseParticipantRow[],
+    (attachmentsData ?? []) as ExpenseAttachmentRow[],
+    membershipToAccount,
+  )
+}
+
+async function getPaymentById(paymentId: number, membershipToAccount: Map<number, number>) {
+  const { data, error } = await supabaseAdmin
+    .from('payments')
+    .select('*')
+    .eq('id', paymentId)
+    .single()
+
+  if (error) throw new Error(`Failed to load payment: ${error.message}`)
+  return mapPayment(data as PaymentRow, membershipToAccount)
+}
+
 export async function listExpensesByApartmentId(apartmentId: number) {
   const { membershipToAccount } = await loadMembershipMaps(apartmentId)
   const { data, error } = await supabaseAdmin
@@ -164,7 +202,7 @@ export async function createExpense(input: {
   participantAccountIds: number[]
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const paidByMembershipId = requireMembershipId(accountToMembership, input.paidByAccountId, 'the payer')
   const participantMembershipIds = input.participantAccountIds.map((accountId) =>
     requireMembershipId(accountToMembership, accountId, 'an expense participant'),
@@ -213,8 +251,7 @@ export async function createExpense(input: {
     if (attachmentsError) throw new Error(`Failed to create expense attachments: ${attachmentsError.message}`)
   }
 
-  const expenses = await listExpensesByApartmentId(input.apartmentId)
-  return expenses.find((expense) => expense.id === expenseRow.id) ?? null
+  return getExpenseById(expenseRow.id, membershipToAccount)
 }
 
 export async function updateExpense(input: {
@@ -228,7 +265,7 @@ export async function updateExpense(input: {
   participantAccountIds: number[]
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const paidByMembershipId = requireMembershipId(accountToMembership, input.paidByAccountId, 'the payer')
   const participantMembershipIds = input.participantAccountIds.map((accountId) =>
     requireMembershipId(accountToMembership, accountId, 'an expense participant'),
@@ -292,8 +329,7 @@ export async function updateExpense(input: {
     if (attachmentsError) throw new Error(`Failed to update expense attachments: ${attachmentsError.message}`)
   }
 
-  const expenses = await listExpensesByApartmentId(input.apartmentId)
-  return expenses.find((expense) => expense.id === input.expenseId) ?? null
+  return getExpenseById(input.expenseId, membershipToAccount)
 }
 
 export async function softDeleteExpense(expenseId: number) {
@@ -329,7 +365,7 @@ export async function createPayment(input: {
   paymentDate: string
   note?: string | null
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const payerMembershipId = requireMembershipId(accountToMembership, input.payerAccountId, 'the payer')
   const payeeMembershipId = requireMembershipId(accountToMembership, input.payeeAccountId, 'the payee')
 
@@ -349,8 +385,7 @@ export async function createPayment(input: {
 
   if (error) throw new Error(`Failed to create payment: ${error.message}`)
   const paymentRow = data as PaymentRow
-  const payments = await listPaymentsByApartmentId(input.apartmentId)
-  return payments.find((payment) => payment.id === paymentRow.id) ?? null
+  return getPaymentById(paymentRow.id, membershipToAccount)
 }
 
 export async function updatePayment(input: {
@@ -362,7 +397,7 @@ export async function updatePayment(input: {
   paymentDate: string
   note?: string | null
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const payerMembershipId = requireMembershipId(accountToMembership, input.payerAccountId, 'the payer')
   const payeeMembershipId = requireMembershipId(accountToMembership, input.payeeAccountId, 'the payee')
 
@@ -379,8 +414,7 @@ export async function updatePayment(input: {
     .eq('id', input.paymentId)
 
   if (error) throw new Error(`Failed to update payment: ${error.message}`)
-  const payments = await listPaymentsByApartmentId(input.apartmentId)
-  return payments.find((payment) => payment.id === input.paymentId) ?? null
+  return getPaymentById(input.paymentId, membershipToAccount)
 }
 
 export async function softDeletePayment(paymentId: number) {

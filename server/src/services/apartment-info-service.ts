@@ -59,6 +59,28 @@ function mapApartmentInfoItem(row: ApartmentInfoItemRow, attachments: ApartmentI
   }
 }
 
+async function getApartmentInfoItemById(itemId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('apartment_info_items')
+    .select('*')
+    .eq('id', itemId)
+    .single()
+
+  if (error) throw new Error(`Failed to load apartment info item: ${error.message}`)
+
+  const { data: attachmentsData, error: attachmentsError } = await supabaseAdmin
+    .from('apartment_info_attachments')
+    .select('*')
+    .eq('apartment_info_item_id', itemId)
+
+  if (attachmentsError) throw new Error(`Failed to load apartment info attachments: ${attachmentsError.message}`)
+
+  return mapApartmentInfoItem(
+    data as ApartmentInfoItemRow,
+    (attachmentsData ?? []) as ApartmentInfoAttachmentRow[],
+  )
+}
+
 export async function listApartmentInfoItemsByApartmentId(apartmentId: number) {
   const { data, error } = await supabaseAdmin
     .from('apartment_info_items')
@@ -133,8 +155,7 @@ export async function createApartmentInfoItem(input: {
     if (attachmentsError) throw new Error(`Failed to create apartment info attachments: ${attachmentsError.message}`)
   }
 
-  const items = await listApartmentInfoItemsByApartmentId(input.apartmentId)
-  return items.find((item) => item.id === itemRow.id) ?? null
+  return getApartmentInfoItemById(itemRow.id)
 }
 
 export async function updateApartmentInfoItem(input: {
@@ -189,8 +210,7 @@ export async function updateApartmentInfoItem(input: {
     }
   }
 
-  const items = await listApartmentInfoItemsByApartmentId(input.apartmentId)
-  return items.find((item) => item.id === input.itemId) ?? null
+  return getApartmentInfoItemById(input.itemId)
 }
 
 export async function deleteApartmentInfoItem(itemId: number) {

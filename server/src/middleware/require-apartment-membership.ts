@@ -18,6 +18,15 @@ export async function requireApartmentMembership(
       return
     }
 
+    if (
+      request.auth.membership &&
+      request.auth.membership.apartmentId === apartmentId &&
+      request.auth.membership.status === 'active'
+    ) {
+      next()
+      return
+    }
+
     const membership = await findActiveMembershipByApartmentAndAccount(
       apartmentId,
       request.auth.account.id,

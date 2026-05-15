@@ -1,16 +1,12 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Card } from '../../components/Card'
-import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { TicketStatusActionChip, TicketStatusChip, ticketLabels } from '../../components/StatusChip'
+import { TicketStatusChip } from '../../components/StatusChip'
 import { useAuth } from '../../context/AuthContext'
 import { useApartment } from '../../context/ApartmentContext'
-import {
-  useTickets,
-  type TicketAttachment,
-} from '../../context/TicketsContext'
+import { useTickets, type TicketAttachment } from '../../context/TicketsContext'
 import { ticketDetailsPath } from '../../routes/paths'
-import type { TicketCategory, TicketStatus } from '../../types/models'
+import type { TicketCategory } from '../../types/models'
 
 interface TicketFormState {
   title: string
@@ -25,14 +21,6 @@ const initialTicketForm: TicketFormState = {
   description: '',
   category: 'תקלה',
 }
-
-const ticketStatusOptions: { value: TicketStatus; label: string }[] = [
-  { value: 'open', label: ticketLabels.open },
-  { value: 'sent_to_landlord', label: ticketLabels.sent_to_landlord },
-  { value: 'in_progress', label: ticketLabels.in_progress },
-  { value: 'closed', label: ticketLabels.closed },
-  { value: 'cancelled', label: ticketLabels.cancelled },
-]
 
 function formatTicketDate(value: string) {
   return new Intl.DateTimeFormat('he-IL', {
@@ -53,15 +41,12 @@ function readFileAsDataUrl(file: File) {
 
 export function TicketsPage() {
   const { user } = useAuth()
-  const { tickets, addTicket, deleteTicket, updateTicketStatus } = useTickets()
+  const { tickets, addTicket } = useTickets()
   const { current } = useApartment()
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false)
-  const [ticketToDelete, setTicketToDelete] = useState<number | null>(null)
   const [ticketForm, setTicketForm] = useState<TicketFormState>(initialTicketForm)
   const [attachments, setAttachments] = useState<TicketAttachment[]>([])
   const [formError, setFormError] = useState('')
-  const [listError, setListError] = useState('')
-  const [openStatusTicketId, setOpenStatusTicketId] = useState<number | null>(null)
   const isLandlord = user?.role === 'landlord'
   const apartmentId = current?.apartment.id ?? 0
   const scopedTickets = tickets.filter((ticket) => ticket.apartment_id === apartmentId)
@@ -128,62 +113,6 @@ export function TicketsPage() {
     }
   }
 
-  async function confirmDeleteTicket() {
-    if (ticketToDelete == null) return
-    setListError('')
-
-    try {
-      await deleteTicket(ticketToDelete)
-      setTicketToDelete(null)
-    } catch (error) {
-      setListError(error instanceof Error ? error.message : 'מחיקת הפנייה נכשלה.')
-      setTicketToDelete(null)
-    }
-  }
-
-  async function handleInlineStatusChange(ticketId: number, status: TicketStatus) {
-    setListError('')
-
-    try {
-      await updateTicketStatus(ticketId, status)
-    } catch (error) {
-      setListError(error instanceof Error ? error.message : 'עדכון הסטטוס נכשל.')
-    } finally {
-      setOpenStatusTicketId(null)
-    }
-  }
-
-  function renderStatusMenu(ticketId: number, status: TicketStatus) {
-    const isOpen = openStatusTicketId === ticketId
-
-    return (
-      <div className="inline-status-menu" onClick={(event) => event.stopPropagation()}>
-        <TicketStatusActionChip
-          status={status}
-          onClick={() =>
-            setOpenStatusTicketId((currentId) => (currentId === ticketId ? null : ticketId))
-          }
-        />
-        {isOpen ? (
-          <div className="inline-status-menu__panel">
-            {ticketStatusOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`inline-status-menu__option${
-                  option.value === status ? ' inline-status-menu__option--active' : ''
-                }`}
-                onClick={() => void handleInlineStatusChange(ticketId, option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    )
-  }
-
   return (
     <div className="page tickets-page">
       <div className="page__head tickets-hero">
@@ -199,7 +128,6 @@ export function TicketsPage() {
       </div>
 
       <Card title="רשימת פניות" className="status-menu-card">
-        {listError ? <p className="form-message form-message--error">{listError}</p> : null}
         <ul className="ticket-list ticket-list--cards">
           {scopedTickets.map((ticket) => (
             <li key={ticket.id} className="ticket-list__item">
@@ -221,19 +149,8 @@ export function TicketsPage() {
                   </div>
                 </Link>
                 <div className="ticket-item-card__status">
-                  {isLandlord ? renderStatusMenu(ticket.id, ticket.status) : <TicketStatusChip status={ticket.status} />}
+                  <TicketStatusChip status={ticket.status} />
                 </div>
-                {isLandlord ? null : (
-                  <div className="payment-form__actions">
-                    <button
-                      type="button"
-                      className="btn-text btn-text--danger"
-                      onClick={() => setTicketToDelete(ticket.id)}
-                    >
-                      מחיקה
-                    </button>
-                  </div>
-                )}
               </div>
             </li>
           ))}
@@ -319,9 +236,7 @@ export function TicketsPage() {
                 </div>
               ) : null}
 
-              {formError ? (
-                <p className="form-message form-message--error">{formError}</p>
-              ) : null}
+              {formError ? <p className="form-message form-message--error">{formError}</p> : null}
 
               <div className="ticket-form__actions">
                 <button
@@ -338,17 +253,6 @@ export function TicketsPage() {
             </form>
           </section>
         </div>
-      ) : null}
-
-      {ticketToDelete != null ? (
-        <ConfirmDialog
-          title="למחוק את הפנייה?"
-          message="הפנייה תוסר מרשימת הפניות ולא תהיה זמינה עוד."
-          confirmLabel="מחיקה"
-          cancelLabel="ביטול"
-          onConfirm={confirmDeleteTicket}
-          onCancel={() => setTicketToDelete(null)}
-        />
       ) : null}
     </div>
   )

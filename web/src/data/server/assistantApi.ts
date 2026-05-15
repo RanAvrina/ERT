@@ -23,12 +23,22 @@ export interface AssistantContextSnapshot {
     toName: string
     amount: number
   }>
+  insights: string[]
+  reminders: string[]
+}
+
+export interface AssistantActionProposal {
+  token: string
+  type: 'create_payment' | 'create_shopping_item'
+  summary: string
+  confirmLabel: string
 }
 
 export interface AssistantQueryResponse {
   answer: string
   context: AssistantContextSnapshot
   suggestions: string[]
+  proposedAction?: AssistantActionProposal
 }
 
 export async function readAssistantContextViaApi(apartmentId: number) {
@@ -43,5 +53,19 @@ export async function queryAssistantViaApi(apartmentId: number, question: string
   return apiRequest<AssistantQueryResponse>(`/apartments/${apartmentId}/assistant/query`, {
     method: 'POST',
     body: JSON.stringify({ question }),
+  })
+}
+
+export async function confirmAssistantActionViaApi(apartmentId: number, token: string) {
+  return apiRequest<{ message: string }>(`/apartments/${apartmentId}/assistant/action/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+}
+
+export async function cancelAssistantActionViaApi(apartmentId: number, token: string) {
+  return apiRequest<null>(`/apartments/${apartmentId}/assistant/action/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ token }),
   })
 }

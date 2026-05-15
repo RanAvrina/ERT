@@ -8,11 +8,19 @@ import {
   answerAssistantQuestion,
   getAssistantContextSnapshot,
 } from '../services/assistant-service.js'
+import {
+  cancelAssistantAction,
+  executeAssistantAction,
+} from '../services/assistant-action-service.js'
 
 export const assistantRouter = Router({ mergeParams: true })
 
 const assistantQuestionSchema = z.object({
   question: z.string().trim().min(1),
+})
+
+const assistantActionSchema = z.object({
+  token: z.string().uuid(),
 })
 
 assistantRouter.get(
@@ -47,6 +55,58 @@ assistantRouter.post(
 
       const result = await answerAssistantQuestion(apartmentId, body.question, request.auth.account)
       response.json(result)
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+assistantRouter.post(
+  '/action/confirm',
+  authenticate,
+  requireAuth,
+  requireApartmentMembership,
+  async (request, response, next) => {
+    try {
+      const apartmentId = Number(request.params.apartmentId)
+      const body = validateBody(assistantActionSchema, request.body)
+      if (!request.auth) {
+        response.status(401).json({ error: 'Authentication is required.' })
+        return
+      }
+
+      const result = await executeAssistantAction({
+        token: body.token,
+        apartmentId,
+        account: request.auth.account,
+      })
+      response.json(result)
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+assistantRouter.post(
+  '/action/cancel',
+  authenticate,
+  requireAuth,
+  requireApartmentMembership,
+  async (request, response, next) => {
+    try {
+      const apartmentId = Number(request.params.apartmentId)
+      const body = validateBody(assistantActionSchema, request.body)
+      if (!request.auth) {
+        response.status(401).json({ error: 'Authentication is required.' })
+        return
+      }
+
+      cancelAssistantAction({
+        token: body.token,
+        apartmentId,
+        accountId: request.auth.account.id,
+      })
+      response.status(204).send()
     } catch (error) {
       next(error)
     }

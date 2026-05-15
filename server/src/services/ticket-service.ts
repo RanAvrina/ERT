@@ -4,7 +4,8 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { listActiveMembershipsByApartmentId } from './membership-service.js'
 
 type TicketCategory = 'issue' | 'request' | 'finance' | 'other'
-type TicketStatus = 'open' | 'sent_to_landlord' | 'in_progress' | 'closed' | 'cancelled'
+type TicketStatus = 'open' | 'in_progress' | 'closed'
+type LegacyTicketStatus = TicketStatus | 'sent_to_landlord' | 'cancelled'
 
 interface MaintenanceTicketRow {
   id: number
@@ -12,7 +13,7 @@ interface MaintenanceTicketRow {
   title: string
   description: string
   category: TicketCategory
-  status: TicketStatus
+  status: LegacyTicketStatus
   created_by_membership_id: number
   created_at: string
   updated_at: string
@@ -70,6 +71,12 @@ function mapAttachment(row: TicketAttachmentRow) {
   }
 }
 
+function normalizeTicketStatus(status: LegacyTicketStatus): TicketStatus {
+  if (status === 'sent_to_landlord') return 'in_progress'
+  if (status === 'cancelled') return 'closed'
+  return status
+}
+
 function mapTicket(
   row: MaintenanceTicketRow,
   attachments: TicketAttachmentRow[],
@@ -81,7 +88,7 @@ function mapTicket(
     title: row.title,
     description: row.description,
     category: row.category,
-    status: row.status,
+    status: normalizeTicketStatus(row.status),
     createdByAccountId: membershipToAccount.get(row.created_by_membership_id) ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -99,13 +106,35 @@ function mapComment(row: TicketCommentRow, membershipToAccount: Map<number, numb
   }
 }
 
+async function getTicketById(ticketId: number, membershipToAccount: Map<number, number>) {
+  const { data, error } = await supabaseAdmin
+    .from('maintenance_tickets')
+    .select('*')
+    .eq('id', ticketId)
+    .single()
+
+  if (error) throw new Error(`Failed to load ticket: ${error.message}`)
+
+  const { data: attachmentData, error: attachmentError } = await supabaseAdmin
+    .from('ticket_attachments')
+    .select('*')
+    .eq('ticket_id', ticketId)
+
+  if (attachmentError) throw new Error(`Failed to load ticket attachments: ${attachmentError.message}`)
+
+  return mapTicket(
+    data as MaintenanceTicketRow,
+    (attachmentData ?? []) as TicketAttachmentRow[],
+    membershipToAccount,
+  )
+}
+
 export async function listTicketsByApartmentId(apartmentId: number) {
   const { membershipToAccount } = await loadMembershipMaps(apartmentId)
   const { data, error } = await supabaseAdmin
     .from('maintenance_tickets')
     .select('*')
     .eq('apartment_id', apartmentId)
-    .neq('status', 'cancelled')
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
 
@@ -161,7 +190,7 @@ export async function createTicket(input: {
   createdByAccountId: number
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
-  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const createdByMembershipId = requireMembershipId(accountToMembership, input.createdByAccountId, 'the ticket creator')
 
   const { data, error } = await supabaseAdmin
@@ -195,8 +224,7 @@ export async function createTicket(input: {
     if (attachmentsError) throw new Error(`Failed to create ticket attachments: ${attachmentsError.message}`)
   }
 
-  const tickets = await listTicketsByApartmentId(input.apartmentId)
-  return tickets.find((ticket) => ticket.id === ticketRow.id) ?? null
+  return getTicketById(ticketRow.id, membershipToAccount)
 }
 
 export async function updateTicket(input: {
@@ -207,6 +235,8 @@ export async function updateTicket(input: {
   category: TicketCategory
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
+  const { membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+
   const { error } = await supabaseAdmin
     .from('maintenance_tickets')
     .update({
@@ -243,8 +273,7 @@ export async function updateTicket(input: {
     }
   }
 
-  const tickets = await listTicketsByApartmentId(input.apartmentId)
-  return tickets.find((ticket) => ticket.id === input.ticketId) ?? null
+  return getTicketById(input.ticketId, membershipToAccount)
 }
 
 export async function updateTicketStatus(input: {
@@ -252,6 +281,7 @@ export async function updateTicketStatus(input: {
   ticketId: number
   status: TicketStatus
 }) {
+  const { membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const { error } = await supabaseAdmin
     .from('maintenance_tickets')
     .update({
@@ -261,8 +291,7 @@ export async function updateTicketStatus(input: {
     .eq('id', input.ticketId)
 
   if (error) throw new Error(`Failed to update ticket status: ${error.message}`)
-  const tickets = await listTicketsByApartmentId(input.apartmentId)
-  return tickets.find((ticket) => ticket.id === input.ticketId) ?? null
+  return getTicketById(input.ticketId, membershipToAccount)
 }
 
 export async function deleteTicket(ticketId: number) {

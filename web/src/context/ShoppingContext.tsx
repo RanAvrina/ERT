@@ -17,6 +17,7 @@ import {
 } from '../data/server/shoppingApi'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
+import { ASSISTANT_DATA_CHANGED_EVENT } from './AssistantContext'
 import type { ShoppingItem, ShoppingItemStatus } from '../types/models'
 
 interface NewShoppingItemInput {
@@ -56,6 +57,7 @@ export function ShoppingProvider({ children }: { children: ReactNode }) {
   const { current } = useApartment()
   const [items, setItems] = useShoppingItemsStore()
   const nextItemId = useRef(Math.max(...items.map((item) => item.id), 0) + 1)
+  const nextTempItemId = useRef(-1)
   const loadedApartmentIdRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -87,20 +89,82 @@ export function ShoppingProvider({ children }: { children: ReactNode }) {
     }
   }, [current?.apartment.id, setItems])
 
+  useEffect(() => {
+    const apartmentId: number | null = current?.apartment.id ?? null
+    if (!isSupabaseConfigured || !apartmentId) return
+    const resolvedApartmentId = apartmentId
+
+    async function refreshShopping() {
+      try {
+        const nextItems = await listShoppingItemsViaApi(resolvedApartmentId)
+        setItems(nextItems)
+        nextItemId.current = Math.max(...nextItems.map((item) => item.id), 0) + 1
+        loadedApartmentIdRef.current = resolvedApartmentId
+      } catch (error) {
+        console.error('Failed to refresh shopping after assistant action.', error)
+      }
+    }
+
+    function handleAssistantDataChanged(event: Event) {
+      const customEvent = event as CustomEvent<{ apartmentId?: number }>
+      if (customEvent.detail?.apartmentId !== resolvedApartmentId) return
+      void refreshShopping()
+    }
+
+    window.addEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
+    return () => {
+      window.removeEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
+    }
+  }, [current?.apartment.id, setItems])
+
   const addItem = useCallback(
-    async (item: NewShoppingItemInput) => {
+    (item: NewShoppingItemInput) => {
       if (isSupabaseConfigured) {
-        const nextItem = await createShoppingItemViaApi({
+        const isPurchased = item.status === 'purchased'
+        const optimisticItem: ShoppingItem = {
+          id: nextTempItemId.current,
+          apartment_id: item.apartment_id,
+          shopping_list_id: item.apartment_id || nextTempItemId.current,
+          item_name: item.item_name,
+          quantity: item.quantity,
+          category: item.category,
+          status: item.status,
+          added_by: item.actor_id,
+          purchased_by: isPurchased ? item.actor_id : null,
+          created_at: new Date().toISOString(),
+          purchased_at: isPurchased ? new Date().toISOString() : null,
+        }
+        nextTempItemId.current -= 1
+
+        setItems((currentItems) => [optimisticItem, ...currentItems])
+
+        void createShoppingItemViaApi({
           apartmentId: item.apartment_id,
           itemName: item.item_name,
           quantity: item.quantity,
           category: item.category,
           status: item.status,
         })
+          .then((nextItem) => {
+            if (!nextItem) {
+              setItems((currentItems) =>
+                currentItems.filter((entry) => entry.id !== optimisticItem.id),
+              )
+              return
+            }
 
-        if (!nextItem) return null
-        setItems((currentItems) => [nextItem, ...currentItems.filter((entry) => entry.id !== nextItem.id)])
-        return nextItem
+            setItems((currentItems) =>
+              currentItems.map((entry) => (entry.id === optimisticItem.id ? nextItem : entry)),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to create shopping item.', error)
+            setItems((currentItems) =>
+              currentItems.filter((entry) => entry.id !== optimisticItem.id),
+            )
+          })
+
+        return Promise.resolve(optimisticItem)
       }
 
       const isPurchased = item.status === 'purchased'
@@ -119,16 +183,33 @@ export function ShoppingProvider({ children }: { children: ReactNode }) {
       }
       nextItemId.current += 1
       setItems((currentItems) => [nextItem, ...currentItems])
-      return nextItem
+      return Promise.resolve(nextItem)
     },
     [setItems],
   )
 
   const updateItem = useCallback(
-    async (itemId: number, item: UpdateShoppingItemInput) => {
+    (itemId: number, item: UpdateShoppingItemInput) => {
       if (isSupabaseConfigured) {
+        const previousItem = items.find((entry) => entry.id === itemId)
+        if (!previousItem) return Promise.resolve(null)
+
+        const optimisticItem: ShoppingItem = {
+          ...previousItem,
+          item_name: item.item_name,
+          quantity: item.quantity,
+          category: item.category,
+          status: item.status,
+          purchased_by: item.purchased_by,
+          purchased_at: item.purchased_at,
+        }
+
+        setItems((currentItems) =>
+          currentItems.map((entry) => (entry.id === itemId ? optimisticItem : entry)),
+        )
+
         const apartmentId = current?.apartment.id ?? 0
-        const updatedItem = await updateShoppingItemViaApi({
+        void updateShoppingItemViaApi({
           apartmentId,
           itemId,
           itemName: item.item_name,
@@ -138,12 +219,26 @@ export function ShoppingProvider({ children }: { children: ReactNode }) {
           purchasedByAccountId: item.purchased_by,
           purchasedAt: item.purchased_at,
         })
+          .then((updatedItem) => {
+            if (!updatedItem) {
+              setItems((currentItems) =>
+                currentItems.map((entry) => (entry.id === itemId ? previousItem : entry)),
+              )
+              return
+            }
 
-        if (!updatedItem) return null
-        setItems((currentItems) =>
-          currentItems.map((entry) => (entry.id === itemId ? updatedItem : entry)),
-        )
-        return updatedItem
+            setItems((currentItems) =>
+              currentItems.map((entry) => (entry.id === itemId ? updatedItem : entry)),
+            )
+          })
+          .catch((error) => {
+            console.error('Failed to update shopping item.', error)
+            setItems((currentItems) =>
+              currentItems.map((entry) => (entry.id === itemId ? previousItem : entry)),
+            )
+          })
+
+        return Promise.resolve(optimisticItem)
       }
 
       let updatedItem: ShoppingItem | null = null
@@ -162,9 +257,9 @@ export function ShoppingProvider({ children }: { children: ReactNode }) {
           return updatedItem
         }),
       )
-      return updatedItem
+      return Promise.resolve(updatedItem)
     },
-    [current?.apartment.id, setItems],
+    [current?.apartment.id, items, setItems],
   )
 
   const updateItemStatus = useCallback(
@@ -188,13 +283,25 @@ export function ShoppingProvider({ children }: { children: ReactNode }) {
 
   const deleteItem = useCallback(
     async (itemId: number) => {
+      const previousItem = items.find((item) => item.id === itemId)
       if (isSupabaseConfigured) {
         const apartmentId = current?.apartment.id ?? 0
-        await deleteShoppingItemViaApi(apartmentId, itemId)
+        setItems((currentItems) => currentItems.filter((item) => item.id !== itemId))
+
+        try {
+          await deleteShoppingItemViaApi(apartmentId, itemId)
+          return
+        } catch (error) {
+          console.error('Failed to delete shopping item.', error)
+          if (previousItem) {
+            setItems((currentItems) => [previousItem, ...currentItems])
+          }
+          throw error
+        }
       }
       setItems((currentItems) => currentItems.filter((item) => item.id !== itemId))
     },
-    [current?.apartment.id, setItems],
+    [current?.apartment.id, items, setItems],
   )
 
   const value = useMemo(

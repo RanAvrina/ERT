@@ -134,7 +134,7 @@ export interface MaintenanceTicketRow {
   title: string
   description: string
   category: 'issue' | 'request' | 'finance' | 'other'
-  status: 'open' | 'sent_to_landlord' | 'in_progress' | 'closed' | 'cancelled'
+  status: 'open' | 'in_progress' | 'closed'
   created_by_membership_id: number
   created_at: string
   updated_at: string
