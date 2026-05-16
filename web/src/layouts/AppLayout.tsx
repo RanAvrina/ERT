@@ -10,7 +10,7 @@ import logoUrl from '../assets/logo.png'
 export function AppLayout() {
   const { user, logout } = useAuth()
   const { current } = useApartment()
-  const apartmentName = current?.apartment.name ?? 'הדירה המשותפת'
+  const apartmentName = current?.apartment.name ?? ''
 
   return (
     <div className="app-shell">

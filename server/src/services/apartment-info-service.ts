@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ApiError } from '../lib/api-error.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { deleteStoredAttachments, normalizeAttachmentsForStorage } from './storage-service.js'
 
 interface ApartmentInfoItemRow {
   id: number
@@ -82,6 +83,16 @@ async function getApartmentInfoItemById(itemId: number) {
   )
 }
 
+async function listApartmentInfoAttachmentRows(itemId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('apartment_info_attachments')
+    .select('*')
+    .eq('apartment_info_item_id', itemId)
+
+  if (error) throw new Error(`Failed to load apartment info attachments: ${error.message}`)
+  return (data ?? []) as ApartmentInfoAttachmentRow[]
+}
+
 async function requireApartmentInfoItemRowInApartment(apartmentId: number, itemId: number) {
   const { data, error } = await supabaseAdmin
     .from('apartment_info_items')
@@ -145,6 +156,12 @@ export async function createApartmentInfoItem(input: {
   notes: string | null
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
+  const normalizedAttachments = await normalizeAttachmentsForStorage(
+    input.apartmentId,
+    'apartment-info',
+    input.attachments,
+  )
+
   const { data, error } = await supabaseAdmin
     .from('apartment_info_items')
     .insert({
@@ -163,9 +180,9 @@ export async function createApartmentInfoItem(input: {
   if (error) throw new Error(`Failed to create apartment info item: ${error.message}`)
   const itemRow = data as ApartmentInfoItemRow
 
-  if (input.attachments?.length) {
+  if (normalizedAttachments.length) {
     const { error: attachmentsError } = await supabaseAdmin.from('apartment_info_attachments').insert(
-      input.attachments.map((attachment) => ({
+      normalizedAttachments.map((attachment) => ({
         id: toUuid(attachment.id),
         apartment_info_item_id: itemRow.id,
         file_name: attachment.name,
@@ -194,6 +211,13 @@ export async function updateApartmentInfoItem(input: {
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
   await requireApartmentInfoItemRowInApartment(input.apartmentId, input.itemId)
+  const normalizedAttachments = input.attachments
+    ? await normalizeAttachmentsForStorage(
+        input.apartmentId,
+        `apartment-info-${input.itemId}`,
+        input.attachments,
+      )
+    : undefined
   const { error } = await supabaseAdmin
     .from('apartment_info_items')
     .update({
@@ -210,17 +234,19 @@ export async function updateApartmentInfoItem(input: {
 
   if (error) throw new Error(`Failed to update apartment info item: ${error.message}`)
 
-  if (input.attachments) {
+  if (normalizedAttachments) {
+    const existingAttachments = await listApartmentInfoAttachmentRows(input.itemId)
     const { error: deleteAttachmentsError } = await supabaseAdmin
       .from('apartment_info_attachments')
       .delete()
       .eq('apartment_info_item_id', input.itemId)
 
     if (deleteAttachmentsError) throw new Error(`Failed to reset apartment info attachments: ${deleteAttachmentsError.message}`)
+    await deleteStoredAttachments(existingAttachments.map((attachment) => attachment.file_url))
 
-    if (input.attachments.length) {
+    if (normalizedAttachments.length) {
       const { error: attachmentsError } = await supabaseAdmin.from('apartment_info_attachments').insert(
-        input.attachments.map((attachment) => ({
+        normalizedAttachments.map((attachment) => ({
           id: toUuid(attachment.id),
           apartment_info_item_id: input.itemId,
           file_name: attachment.name,
@@ -239,6 +265,8 @@ export async function updateApartmentInfoItem(input: {
 
 export async function deleteApartmentInfoItem(apartmentId: number, itemId: number) {
   await requireApartmentInfoItemRowInApartment(apartmentId, itemId)
+  const existingAttachments = await listApartmentInfoAttachmentRows(itemId)
   const { error } = await supabaseAdmin.from('apartment_info_items').delete().eq('id', itemId)
   if (error) throw new Error(`Failed to delete apartment info item: ${error.message}`)
+  await deleteStoredAttachments(existingAttachments.map((attachment) => attachment.file_url))
 }

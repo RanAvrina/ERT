@@ -73,6 +73,14 @@ function normalizeEmail(email: string) {
   return email.trim().toLowerCase()
 }
 
+function buildEmailVerificationRedirect() {
+  if (typeof window === 'undefined' || !window.location.origin) {
+    return undefined
+  }
+
+  return `${window.location.origin}${appRoutes.login}`
+}
+
 function buildDetachedUser(account: AccountIdentity, role: User['role'] = 'tenant'): User {
   return {
     id: account.id,
@@ -196,13 +204,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (!snapshot.membership || !snapshot.apartmentState) {
-          const detachedUser = buildDetachedUser(account)
           if (isLatestSync()) {
             clearActiveApartment()
-            persistUser(detachedUser)
+            persistUser(null)
             setIsAuthReady(true)
           }
-          return detachedUser
+          return null
         }
 
         const apartmentState = await activateApartment(
@@ -297,6 +304,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             password,
             name: name.trim(),
             phone: phone.trim(),
+            emailRedirectTo: buildEmailVerificationRedirect(),
           })
 
           if (!signUpResult.hasSession) {
@@ -398,6 +406,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           if (!snapshot.membership || !snapshot.apartmentState) {
             if (!allowDetachedAccount) {
+              await signOutAuth().catch(() => undefined)
+              persistUser(null)
+              clearActiveApartment()
               return {
                 ok: false,
                 error:

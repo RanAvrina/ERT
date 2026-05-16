@@ -3,6 +3,7 @@ import { ApiError } from '../lib/api-error.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import type { AuthMembership } from '../types/auth.js'
 import { listActiveMembershipsByApartmentId } from './membership-service.js'
+import { deleteStoredAttachments, normalizeAttachmentsForStorage } from './storage-service.js'
 
 type TicketCategory = 'issue' | 'request' | 'finance' | 'other'
 type TicketStatus = 'open' | 'in_progress' | 'closed'
@@ -130,6 +131,16 @@ async function getTicketById(ticketId: number, membershipToAccount: Map<number, 
   )
 }
 
+async function listTicketAttachmentRows(ticketId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('ticket_attachments')
+    .select('*')
+    .eq('ticket_id', ticketId)
+
+  if (error) throw new Error(`Failed to load ticket attachments: ${error.message}`)
+  return (data ?? []) as TicketAttachmentRow[]
+}
+
 async function requireTicketRowInApartment(apartmentId: number, ticketId: number) {
   const { data, error } = await supabaseAdmin
     .from('maintenance_tickets')
@@ -240,6 +251,11 @@ export async function createTicket(input: {
 }) {
   const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
   const createdByMembershipId = requireMembershipId(accountToMembership, input.createdByAccountId, 'the ticket creator')
+  const normalizedAttachments = await normalizeAttachmentsForStorage(
+    input.apartmentId,
+    `ticket-${input.createdByAccountId}`,
+    input.attachments,
+  )
 
   const { data, error } = await supabaseAdmin
     .from('maintenance_tickets')
@@ -257,12 +273,12 @@ export async function createTicket(input: {
   if (error) throw new Error(`Failed to create ticket: ${error.message}`)
   const ticketRow = data as MaintenanceTicketRow
 
-  if (input.attachments?.length) {
+  if (normalizedAttachments.length) {
     const { error: attachmentsError } = await supabaseAdmin.from('ticket_attachments').insert(
-      input.attachments.map((attachment) => ({
-        id: toUuid(attachment.id),
-        ticket_id: ticketRow.id,
-        file_name: attachment.name,
+      normalizedAttachments.map((attachment) => ({
+          id: toUuid(attachment.id),
+          ticket_id: ticketRow.id,
+          file_name: attachment.name,
         file_type: attachment.type,
         file_size: attachment.size,
         file_url: attachment.url,
@@ -289,6 +305,13 @@ export async function updateTicket(input: {
   const actorMembershipId = requireMembershipId(accountToMembership, input.actorAccountId, 'the ticket editor')
   const existingTicket = await requireTicketRowInApartment(input.apartmentId, input.ticketId)
   assertCanEditTicket(existingTicket, actorMembershipId, input.actorRole)
+  const normalizedAttachments = input.attachments
+    ? await normalizeAttachmentsForStorage(
+        input.apartmentId,
+        `ticket-${input.ticketId}`,
+        input.attachments,
+      )
+    : undefined
 
   const { error } = await supabaseAdmin
     .from('maintenance_tickets')
@@ -302,17 +325,19 @@ export async function updateTicket(input: {
 
   if (error) throw new Error(`Failed to update ticket: ${error.message}`)
 
-  if (input.attachments) {
+  if (normalizedAttachments) {
+    const existingAttachments = await listTicketAttachmentRows(input.ticketId)
     const { error: deleteAttachmentsError } = await supabaseAdmin
       .from('ticket_attachments')
       .delete()
       .eq('ticket_id', input.ticketId)
 
     if (deleteAttachmentsError) throw new Error(`Failed to reset ticket attachments: ${deleteAttachmentsError.message}`)
+    await deleteStoredAttachments(existingAttachments.map((attachment) => attachment.file_url))
 
-    if (input.attachments.length) {
+    if (normalizedAttachments.length) {
       const { error: attachmentsError } = await supabaseAdmin.from('ticket_attachments').insert(
-        input.attachments.map((attachment) => ({
+        normalizedAttachments.map((attachment) => ({
           id: toUuid(attachment.id),
           ticket_id: input.ticketId,
           file_name: attachment.name,
@@ -360,8 +385,10 @@ export async function deleteTicket(input: {
   const actorMembershipId = requireMembershipId(accountToMembership, input.actorAccountId, 'the ticket owner')
   const existingTicket = await requireTicketRowInApartment(input.apartmentId, input.ticketId)
   assertCanDeleteTicket(existingTicket, actorMembershipId, input.actorRole)
+  const existingAttachments = await listTicketAttachmentRows(input.ticketId)
   const { error } = await supabaseAdmin.from('maintenance_tickets').delete().eq('id', input.ticketId)
   if (error) throw new Error(`Failed to delete ticket: ${error.message}`)
+  await deleteStoredAttachments(existingAttachments.map((attachment) => attachment.file_url))
 }
 
 export async function createTicketComment(input: {

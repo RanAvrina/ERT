@@ -8,6 +8,7 @@ import { useApartment } from '../../context/ApartmentContext'
 import { useTickets } from '../../context/TicketsContext'
 import { appRoutes } from '../../routes/paths'
 import type { TicketCategory, TicketStatus } from '../../types/models'
+import { openAttachment } from '../../utils/attachments'
 
 interface TicketEditFormState {
   title: string
@@ -163,6 +164,14 @@ export function TicketDetailPage() {
     }
   }
 
+  function handleOpenAttachment(url: string, filename: string) {
+    try {
+      openAttachment(url, filename)
+    } catch {
+      setActionError('לא הצלחנו לפתוח את הקובץ המצורף.')
+    }
+  }
+
   return (
     <div className="page">
       <Link to={appRoutes.tickets} className="link back-link">
@@ -276,9 +285,13 @@ export function TicketDetailPage() {
           <ul className="ticket-attachments">
             {currentTicket.attachments.map((attachment) => (
               <li key={attachment.id} className="ticket-attachments__item">
-                <a href={attachment.url} target="_blank" rel="noreferrer">
+                <button
+                  type="button"
+                  className="btn-text"
+                  onClick={() => handleOpenAttachment(attachment.url, attachment.name)}
+                >
                   {attachment.name}
-                </a>
+                </button>
               </li>
             ))}
           </ul>

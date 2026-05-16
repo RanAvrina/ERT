@@ -8,12 +8,14 @@ export async function signUpWithPassword(input: {
   password: string
   name: string
   phone: string
+  emailRedirectTo?: string
 }) {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
   const { data, error } = await client.auth.signUp({
     email: input.email.trim().toLowerCase(),
     password: input.password,
     options: {
+      emailRedirectTo: input.emailRedirectTo,
       data: {
         full_name: input.name.trim(),
         phone: input.phone.trim(),

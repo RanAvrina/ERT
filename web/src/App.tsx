@@ -34,6 +34,7 @@ function RequireAuth({ children }: { children: ReactElement }) {
   const { current } = useApartment()
   if (!isAuthReady) return <AuthLoadingScreen />
   if (!user) return <Navigate to={appRoutes.login} replace />
+  if (user.apartment_id <= 0) return <Navigate to={appRoutes.login} replace />
   if (user.apartment_id > 0 && current?.apartment.id !== user.apartment_id) {
     return <AuthLoadingScreen />
   }

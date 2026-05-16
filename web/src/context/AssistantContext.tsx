@@ -42,6 +42,12 @@ interface AssistantState {
 
 const AssistantContext = createContext<AssistantState | null>(null)
 export const ASSISTANT_DATA_CHANGED_EVENT = 'assistant:data-changed'
+const defaultSuggestions = [
+  'תן לי תמונת מצב קצרה',
+  'למה אני חייב כסף?',
+  'מה צריך לקנות עכשיו?',
+  'מה הוצאנו הכי הרבה כסף החודש?',
+]
 
 function createMessage(role: AssistantMessage['role'], text: string): AssistantMessage {
   return {
@@ -68,23 +74,13 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<AssistantMessage[]>([
     createMessage('assistant', getWelcomeMessage(apartmentName)),
   ])
-  const [suggestions, setSuggestions] = useState<string[]>([
-    'למה אני חייב כסף?',
-    'מה צריך לקנות עכשיו?',
-    'אילו משימות פתוחות יש?',
-    'תן לי תמונת מצב קצרה',
-  ])
+  const [suggestions, setSuggestions] = useState<string[]>(defaultSuggestions)
   const [contextSnapshot, setContextSnapshot] = useState<AssistantContextSnapshot | null>(null)
   const [pendingAction, setPendingAction] = useState<AssistantActionProposal | null>(null)
 
   useEffect(() => {
     setMessages([createMessage('assistant', getWelcomeMessage(apartmentName))])
-    setSuggestions([
-      'למה אני חייב כסף?',
-      'מה צריך לקנות עכשיו?',
-      'אילו משימות פתוחות יש?',
-      'תן לי תמונת מצב קצרה',
-    ])
+    setSuggestions(defaultSuggestions)
     setContextSnapshot(null)
     setPendingAction(null)
   }, [apartmentId, apartmentName])

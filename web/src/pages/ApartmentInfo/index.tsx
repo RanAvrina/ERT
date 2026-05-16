@@ -14,6 +14,7 @@ import { useAuth } from '../../context/AuthContext'
 import { isSupabaseConfigured } from '../../lib/supabase/env'
 import { appRoutes } from '../../routes/paths'
 import type { ApartmentInfoAttachment, ApartmentInfoItem } from '../../types/models'
+import { openAttachment } from '../../utils/attachments'
 
 interface ApartmentInfoFormState {
   title: string
@@ -336,6 +337,14 @@ export function ApartmentInfoPage() {
     } catch (deleteError) {
       setDetailsError(deleteError instanceof Error ? deleteError.message : 'מחיקת הפריט נכשלה.')
       setItemToDelete(null)
+    }
+  }
+
+  function handleOpenAttachment(attachment: ApartmentInfoAttachment) {
+    try {
+      openAttachment(attachment.url, attachment.name)
+    } catch {
+      setDetailsError('לא הצלחנו לפתוח את הקובץ המצורף.')
     }
   }
 
@@ -704,9 +713,13 @@ export function ApartmentInfoPage() {
                   <ul>
                     {selectedItem.attachments.map((attachment) => (
                       <li key={attachment.id}>
-                        <a href={attachment.url} target="_blank" rel="noreferrer">
+                        <button
+                          type="button"
+                          className="btn-text"
+                          onClick={() => handleOpenAttachment(attachment)}
+                        >
                           {attachment.name}
-                        </a>
+                        </button>
                       </li>
                     ))}
                   </ul>

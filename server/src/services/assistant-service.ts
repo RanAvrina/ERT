@@ -1,7 +1,13 @@
 import type { AuthAccount } from '../types/auth.js'
 import {
+  createExpenseAction,
   createPaymentAction,
   createShoppingItemAction,
+  createShoppingStatusAction,
+  createTaskAction,
+  createTaskStatusAction,
+  createTicketAction,
+  createTicketStatusAction,
   type AssistantActionProposal,
 } from './assistant-action-service.js'
 import { getApartmentStateSnapshot } from './apartment-service.js'
@@ -84,6 +90,13 @@ type AssistantIntent =
   | 'tasks'
   | 'tickets'
   | 'apartment_info'
+
+const defaultSuggestions = [
+  'תן לי תמונת מצב קצרה',
+  'למה אני חייב כסף?',
+  'מה צריך לקנות עכשיו?',
+  'מה הוצאנו הכי הרבה כסף החודש?',
+]
 
 const genericQuestionWords = new Set([
   'אני',
@@ -233,6 +246,82 @@ function isTaskOpen(task: Task) {
 function hasTerm(haystack: string, terms: string[]) {
   const normalizedHaystack = haystack.toLowerCase()
   return terms.some((term) => normalizedHaystack.includes(term))
+}
+
+function monthKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function daysBetween(from: string, to = new Date().toISOString().slice(0, 10)) {
+  const fromTime = new Date(from).getTime()
+  const toTime = new Date(to).getTime()
+  if (!Number.isFinite(fromTime) || !Number.isFinite(toTime)) return 0
+  return Math.floor((toTime - fromTime) / (1000 * 60 * 60 * 24))
+}
+
+function stripTrailingPunctuation(value: string) {
+  return value.replace(/[?.!,:;]+$/g, '').trim()
+}
+
+function inferExpenseCategory(question: string) {
+  const normalized = normalizeText(question)
+  if (normalized.includes('חשמל')) return 'חשמל'
+  if (normalized.includes('מים')) return 'מים'
+  if (normalized.includes('אינטרנט')) return 'אינטרנט'
+  if (normalized.includes('שכירות') || normalized.includes('שכר דירה')) return 'שכירות'
+  if (normalized.includes('גז')) return 'גז'
+  if (normalized.includes('סופר') || normalized.includes('קניות') || normalized.includes('מכולת')) return 'קניות'
+  return null
+}
+
+function inferTicketCategory(question: string): 'issue' | 'request' | 'finance' | 'other' {
+  const normalized = normalizeText(question)
+  if (normalized.includes('כסף') || normalized.includes('תשלום') || normalized.includes('חיוב')) return 'finance'
+  if (normalized.includes('בקשה') || normalized.includes('מבקש')) return 'request'
+  if (
+    normalized.includes('תקלה') ||
+    normalized.includes('נזילה') ||
+    normalized.includes('שבור') ||
+    normalized.includes('לא עובד') ||
+    normalized.includes('מקלחת') ||
+    normalized.includes('מזגן') ||
+    normalized.includes('חשמל')
+  ) {
+    return 'issue'
+  }
+  return 'other'
+}
+
+function inferDueDate(question: string) {
+  const normalized = normalizeText(question)
+  const now = new Date()
+
+  if (normalized.includes('מחר')) {
+    const date = new Date(now)
+    date.setDate(date.getDate() + 1)
+    return date.toISOString().slice(0, 10)
+  }
+
+  if (normalized.includes('היום')) {
+    return now.toISOString().slice(0, 10)
+  }
+
+  const inDaysMatch = normalized.match(/(?:עוד|בעוד)\s+(\d+)\s+ימים?/)
+  if (inDaysMatch) {
+    const date = new Date(now)
+    date.setDate(date.getDate() + Number(inDaysMatch[1]))
+    return date.toISOString().slice(0, 10)
+  }
+
+  const isoMatch = normalized.match(/20\d{2}-\d{2}-\d{2}/)
+  if (isoMatch) return isoMatch[0]
+
+  const slashMatch = normalized.match(/(\d{1,2})[./-](\d{1,2})[./-](20\d{2})/)
+  if (slashMatch) {
+    return `${slashMatch[3]}-${slashMatch[2].padStart(2, '0')}-${slashMatch[1].padStart(2, '0')}`
+  }
+
+  return null
 }
 
 function buildDebtSummary(
@@ -388,9 +477,15 @@ function buildPersonalDebtLines(data: AssistantData, accountId: number) {
 
 function buildInsights(data: AssistantData) {
   const insights: string[] = []
-  const currentMonth = new Date().toISOString().slice(0, 7)
+  const now = new Date()
+  const currentMonth = monthKey(now)
+  const previousMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const previousMonth = monthKey(previousMonthDate)
   const currentMonthExpenses = data.expenses.filter(
     (expense) => expense.status === 'active' && expense.date.startsWith(currentMonth),
+  )
+  const previousMonthExpenses = data.expenses.filter(
+    (expense) => expense.status === 'active' && expense.date.startsWith(previousMonth),
   )
   const categoryTotals = new Map<string, number>()
 
@@ -416,11 +511,75 @@ function buildInsights(data: AssistantData) {
     insights.push(`חשבון החשמל החודשי גבוה יחסית: ${money(electricityTotal)}.`)
   }
 
+  const currentMonthTotal = currentMonthExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
+  const previousMonthTotal = previousMonthExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
+  if (
+    currentMonthTotal >= 300 &&
+    previousMonthTotal > 0 &&
+    currentMonthTotal >= previousMonthTotal * 1.4
+  ) {
+    insights.push(
+      `סך ההוצאות החודש גבוה משמעותית מהחודש הקודם: ${money(currentMonthTotal)} מול ${money(previousMonthTotal)}.`,
+    )
+  }
+
+  const shoppingTotal = currentMonthExpenses
+    .filter((expense) => normalizeText(`${expense.description} ${expense.category ?? ''}`).includes('קני'))
+    .reduce((sum, expense) => sum + Number(expense.amount), 0)
+  if (shoppingTotal >= 500) {
+    insights.push(`נרשמו הוצאות קניות גבוהות החודש: ${money(shoppingTotal)}.`)
+  }
+
+  const openShoppingItems = data.shoppingItems.filter((item) => item.status === 'open')
+  if (openShoppingItems.length >= 6) {
+    insights.push(`רשימת הקניות מתחילה להצטבר: יש כרגע ${openShoppingItems.length} פריטים פתוחים.`)
+  }
+
+  const openTickets = data.tickets.filter((ticket) => ticket.status !== 'closed')
+  const oldestOpenTicket = openTickets
+    .map((ticket) => ({ ticket, age: daysBetween(ticket.createdAt.slice(0, 10)) }))
+    .sort((left, right) => right.age - left.age)[0]
+  if (oldestOpenTicket && oldestOpenTicket.age >= 7) {
+    insights.push(
+      `יש פנייה פתוחה ותיקה: "${oldestOpenTicket.ticket.title}" פתוחה כבר ${oldestOpenTicket.age} ימים.`,
+    )
+  }
+
+  const overdueTasks = data.tasks.filter(
+    (task) => isTaskOpen(task) && task.dueDate && task.dueDate < new Date().toISOString().slice(0, 10),
+  )
+  if (overdueTasks.length >= 2) {
+    insights.push(`יש כבר ${overdueTasks.length} משימות באיחור, כנראה צריך לסגור אותן לפני שייווצר עומס.`)
+  }
+
+  const monthlyPayments = data.payments.filter(
+    (payment) => payment.status === 'recorded' && payment.paymentDate.startsWith(currentMonth),
+  )
+  const monthlyDebts = buildDebtSummary(data.apartmentState, data.expenses, data.payments)
+  if (monthlyDebts.length > 0 && monthlyPayments.length === 0) {
+    insights.push('יש יתרות פתוחות בין דיירים, אבל עדיין לא נרשם שום תשלום החודש.')
+  }
+
+  const payerTotals = new Map<number, number>()
+  for (const expense of currentMonthExpenses) {
+    payerTotals.set(
+      expense.paidByAccountId,
+      (payerTotals.get(expense.paidByAccountId) ?? 0) + Number(expense.amount),
+    )
+  }
+  const topPayer = [...payerTotals.entries()].sort((left, right) => right[1] - left[1])[0]
+  if (topPayer && currentMonthTotal > 0 && topPayer[1] / currentMonthTotal >= 0.6) {
+    const user = data.apartmentState.users.find((entry) => entry.id === topPayer[0])
+    insights.push(
+      `${user?.name ?? 'אחד הדיירים'} שילם עד עכשיו את רוב הוצאות החודש: ${money(topPayer[1])}.`,
+    )
+  }
+
   if (!insights.length) {
     insights.push('כרגע אין חריגה בולטת במיוחד בנתונים של הדירה.')
   }
 
-  return insights
+  return insights.slice(0, 5)
 }
 
 function buildReminders(data: AssistantData) {
@@ -443,7 +602,33 @@ function buildReminders(data: AssistantData) {
     reminders.push(`יש ${overdueTasks.length} משימות באיחור שעדיין פתוחות.`)
   }
 
-  return reminders
+  const upcomingTasks = data.tasks.filter((task) => {
+    if (!isTaskOpen(task) || !task.dueDate) return false
+    const daysUntilDue = daysBetween(new Date().toISOString().slice(0, 10), task.dueDate)
+    return daysUntilDue >= 0 && daysUntilDue <= 3
+  })
+
+  if (upcomingTasks.length > 0) {
+    reminders.push(`יש ${upcomingTasks.length} משימות שיגיעו ליעד בימים הקרובים.`)
+  }
+
+  const openTickets = data.tickets.filter((ticket) => ticket.status !== 'closed')
+  const staleTickets = openTickets.filter((ticket) => daysBetween(ticket.createdAt.slice(0, 10)) >= 10)
+  if (staleTickets.length > 0) {
+    reminders.push(`יש ${staleTickets.length} פניות פתוחות שכבר מחכות מעל 10 ימים.`)
+  }
+
+  const openShoppingItems = data.shoppingItems.filter((item) => item.status === 'open')
+  if (openShoppingItems.length >= 8) {
+    reminders.push('רשימת הקניות כבר ארוכה יחסית. שווה לסגור קנייה מרוכזת.')
+  }
+
+  const openDebts = buildDebtSummary(data.apartmentState, data.expenses, data.payments)
+  if (openDebts.length >= 3) {
+    reminders.push('יש כמה יתרות פתוחות בין דיירים. שווה לרשום תשלומים כדי לא לצבור פערים.')
+  }
+
+  return reminders.slice(0, 5)
 }
 
 async function loadAssistantData(apartmentId: number): Promise<AssistantData> {
@@ -542,6 +727,45 @@ function findMatchedRoommate(
   }
 
   return bestMatch
+}
+
+function findMentionedRoommates(
+  question: string,
+  apartmentState: ApartmentStateSnapshot,
+  excludeAccountId?: number,
+) {
+  const normalizedQuestion = normalizeText(question)
+  return apartmentState.users.filter((user) => {
+    if (excludeAccountId != null && user.id === excludeAccountId) return false
+    const tokens = normalizeText(user.name).split(/\s+/).filter(Boolean)
+    return tokens.some((token) => normalizedQuestion.includes(token))
+  })
+}
+
+function findMentionedUser(question: string, apartmentState: ApartmentStateSnapshot) {
+  const normalizedQuestion = normalizeText(question)
+  let bestMatch: { id: number; name: string; score: number } | null = null
+
+  for (const user of apartmentState.users) {
+    const tokens = normalizeText(user.name).split(/\s+/).filter(Boolean)
+    const score = tokens.reduce(
+      (sum, token) => (normalizedQuestion.includes(token) ? sum + token.length : sum),
+      0,
+    )
+
+    if (score <= 0) continue
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { id: user.id, name: user.name, score }
+    }
+  }
+
+  return bestMatch
+}
+
+function scoreEntityMatch(question: string, label: string) {
+  const normalizedQuestion = normalizeText(question)
+  const tokens = normalizeText(label).split(/\s+/).filter(Boolean)
+  return tokens.reduce((sum, token) => (normalizedQuestion.includes(token) ? sum + token.length : sum), 0)
 }
 
 function parsePaymentAction(
@@ -652,6 +876,272 @@ function parseShoppingAction(question: string, account: AuthAccount, data: Assis
   })
 }
 
+function parseExpenseAction(question: string, account: AuthAccount, data: AssistantData): AssistantActionProposal | null {
+  const normalized = normalizeText(question)
+  const impliesCreate =
+    normalized.includes('תרשום הוצאה') ||
+    normalized.includes('לרשום הוצאה') ||
+    normalized.includes('תוסיף הוצאה') ||
+    normalized.includes('פתח הוצאה') ||
+    normalized.includes('הוצאה של')
+
+  if (!impliesCreate) return null
+
+  const amountMatch = normalized.match(/(\d+(?:[.,]\d{1,2})?)/)
+  if (!amountMatch) return null
+
+  const amount = amountMatch[1].replace(',', '.')
+  const mentionedRoommates = findMentionedRoommates(question, data.apartmentState, account.id)
+  let description = question
+    .replace(/תרשום הוצאה/gi, '')
+    .replace(/לרשום הוצאה/gi, '')
+    .replace(/תוסיף הוצאה/gi, '')
+    .replace(/פתח הוצאה/gi, '')
+    .replace(/הוצאה של/gi, '')
+    .replace(amountMatch[0], '')
+    .replace(/שקל|ש"ח|₪/gi, '')
+    .replace(/על\s+/gi, '')
+    .replace(/לכל הבית/gi, '')
+    .replace(/לכולם/gi, '')
+    .replace(/לכולנו/gi, '')
+    .replace(/ותחלק(?:י)?(?:\s+אותה)?\s+על/gi, '')
+    .replace(/תחלק(?:י)?(?:\s+אותה)?\s+על/gi, '')
+    .replace(/ביני\s+לבין/gi, '')
+    .replace(/בין/gi, '')
+    .trim()
+
+  for (const roommate of mentionedRoommates) {
+    const escapedName = roommate.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    description = description
+      .replace(new RegExp(`\\s+ו?על\\s+${escapedName}`, 'gi'), '')
+      .replace(new RegExp(`\\s+ו?${escapedName}`, 'gi'), '')
+      .replace(new RegExp(`\\s+לבין\\s+${escapedName}`, 'gi'), '')
+      .replace(new RegExp(`\\s+${escapedName}`, 'gi'), '')
+      .trim()
+  }
+
+  description = stripTrailingPunctuation(description)
+  if (!description || description.length < 2) return null
+
+  const explicitSplit =
+    normalized.includes('תחלק') ||
+    normalized.includes('ותחלק') ||
+    normalized.includes('עליי ועל') ||
+    normalized.includes('עלי ועל') ||
+    normalized.includes('ביני לבין') ||
+    normalized.includes('בין ')
+
+  const allParticipants =
+    normalized.includes('לכל הבית') ||
+    normalized.includes('לכולם') ||
+    normalized.includes('לכולנו') ||
+    data.apartmentState.users.length <= 2
+  const participantIds = allParticipants
+    ? data.apartmentState.users.map((user) => user.id)
+    : explicitSplit && mentionedRoommates.length
+      ? [account.id, ...mentionedRoommates.map((user) => user.id)]
+      : [account.id]
+  const uniqueParticipantIds = [...new Set(participantIds)]
+  const participantLabel = allParticipants
+    ? 'בין כל הדיירים'
+    : uniqueParticipantIds.length > 1
+      ? `בין ${[
+          data.apartmentState.users.find((user) => user.id === account.id)?.name ?? 'אתה',
+          ...mentionedRoommates.map((user) => user.name),
+        ].join(' ו')}`
+      : 'רק עבורך'
+
+  return createExpenseAction({
+    apartmentId: data.apartmentState.apartment.id,
+    account,
+    amount,
+    description,
+    category: inferExpenseCategory(question),
+    participantAccountIds: uniqueParticipantIds,
+    participantLabel,
+  })
+}
+
+function parseTaskAction(question: string, account: AuthAccount, data: AssistantData): AssistantActionProposal | null {
+  const normalized = normalizeText(question)
+  const impliesCreate =
+    normalized.includes('תפתח משימה') ||
+    normalized.includes('פתח משימה') ||
+    normalized.includes('תיצור משימה') ||
+    normalized.includes('צור משימה') ||
+    normalized.includes('תוסיף משימה')
+
+  if (!impliesCreate) return null
+
+  const roommate = findMatchedRoommate(normalized, data.apartmentState, account.id)
+  let title = question
+    .replace(/תפתח משימה/gi, '')
+    .replace(/פתח משימה/gi, '')
+    .replace(/תיצור משימה/gi, '')
+    .replace(/צור משימה/gi, '')
+    .replace(/תוסיף משימה/gi, '')
+    .replace(/למחר/gi, '')
+    .replace(/להיום/gi, '')
+    .replace(/לעוד\s+\d+\s+ימים?/gi, '')
+    .trim()
+
+  if (roommate) {
+    const escapedName = roommate.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    title = title
+      .replace(new RegExp(`\\s+ל${escapedName}`, 'gi'), '')
+      .replace(new RegExp(`\\s+עבור\\s+${escapedName}`, 'gi'), '')
+      .replace(new RegExp(`\\s+${escapedName}`, 'gi'), '')
+      .trim()
+  }
+
+  title = stripTrailingPunctuation(title)
+  if (!title || title.length < 2) return null
+
+  const assigneeAccountId = roommate ? roommate.accountId : account.id
+  const assigneeLabel =
+    assigneeAccountId === account.id
+      ? 'אתה'
+      : (data.apartmentState.users.find((user) => user.id === assigneeAccountId)?.name ?? 'דייר אחר')
+
+  return createTaskAction({
+    apartmentId: data.apartmentState.apartment.id,
+    account,
+    title,
+    description: null,
+    assigneeAccountId,
+    assigneeLabel,
+    dueDate: inferDueDate(question),
+  })
+}
+
+function parseTicketAction(question: string, account: AuthAccount, data: AssistantData): AssistantActionProposal | null {
+  const normalized = normalizeText(question)
+  const impliesCreate =
+    normalized.includes('תפתח פנייה') ||
+    normalized.includes('פתח פנייה') ||
+    normalized.includes('תיצור פנייה') ||
+    normalized.includes('צור פנייה') ||
+    normalized.includes('תדווח') ||
+    normalized.includes('לדווח')
+
+  if (!impliesCreate) return null
+
+  let description = question
+    .replace(/תפתח פנייה/gi, '')
+    .replace(/פתח פנייה/gi, '')
+    .replace(/תיצור פנייה/gi, '')
+    .replace(/צור פנייה/gi, '')
+    .replace(/תדווח/gi, '')
+    .replace(/לדווח/gi, '')
+    .trim()
+
+  description = stripTrailingPunctuation(description)
+  if (!description || description.length < 4) return null
+
+  const title = description.split(/[,.]/)[0].trim().slice(0, 80)
+  if (!title) return null
+
+  return createTicketAction({
+    apartmentId: data.apartmentState.apartment.id,
+    account,
+    title,
+    description,
+    category: inferTicketCategory(question),
+  })
+}
+
+function parseStatusAction(question: string, account: AuthAccount, data: AssistantData): AssistantActionProposal | null {
+  const normalized = normalizeText(question)
+  const targetTaskStatus = normalized.includes('בוצע') || normalized.includes('הושלם') || normalized.includes('סיים')
+    ? { value: 'done' as const, label: 'בוצעה' }
+    : normalized.includes('בטיפול') || normalized.includes('התחל')
+      ? { value: 'in_progress' as const, label: 'בביצוע' }
+      : normalized.includes('פתח') || normalized.includes('להחזיר לפתוח')
+        ? { value: 'open' as const, label: 'פתוחה' }
+        : null
+
+  const targetShoppingStatus = normalized.includes('נקנה') || normalized.includes('נקנתה') || normalized.includes('קניתי')
+    ? { value: 'purchased' as const, label: 'נקנה' }
+    : normalized.includes('בטל') || normalized.includes('לבטל')
+      ? { value: 'cancelled' as const, label: 'בוטל' }
+      : normalized.includes('פתוח') || normalized.includes('להחזיר')
+        ? { value: 'open' as const, label: 'פתוח' }
+        : null
+
+  const targetTicketStatus = normalized.includes('בטיפול')
+    ? { value: 'in_progress' as const, label: 'בטיפול' }
+    : normalized.includes('סגור') || normalized.includes('נסגר')
+      ? { value: 'closed' as const, label: 'סגורה' }
+      : normalized.includes('פתח')
+        ? { value: 'open' as const, label: 'פתוחה' }
+        : null
+
+  const taskIntent = normalized.includes('משימה') || normalized.includes('מטלה')
+  const shoppingIntent = normalized.includes('קנייה') || normalized.includes('קניות') || normalized.includes('מוצר') || normalized.includes('פריט')
+  const ticketIntent = normalized.includes('פנייה') || normalized.includes('תקלה')
+
+  if (taskIntent && targetTaskStatus) {
+    const task = [...data.tasks]
+      .map((task) => ({ task, score: scoreEntityMatch(question, task.title) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)[0]?.task
+
+    if (!task) return null
+
+    return createTaskStatusAction({
+      apartmentId: data.apartmentState.apartment.id,
+      account,
+      taskId: task.id,
+      title: task.title,
+      description: task.description,
+      assigneeAccountId: task.assigneeAccountId,
+      dueDate: task.dueDate,
+      status: targetTaskStatus.value,
+      statusLabel: targetTaskStatus.label,
+    })
+  }
+
+  if (shoppingIntent && targetShoppingStatus) {
+    const item = [...data.shoppingItems]
+      .map((item) => ({ item, score: scoreEntityMatch(question, item.itemName) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)[0]?.item
+
+    if (!item) return null
+
+    return createShoppingStatusAction({
+      apartmentId: data.apartmentState.apartment.id,
+      account,
+      itemId: item.id,
+      itemName: item.itemName,
+      quantity: item.quantity,
+      category: item.category,
+      status: targetShoppingStatus.value,
+      statusLabel: targetShoppingStatus.label,
+    })
+  }
+
+  if (ticketIntent && targetTicketStatus) {
+    const ticket = [...data.tickets]
+      .map((ticket) => ({ ticket, score: scoreEntityMatch(question, ticket.title) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)[0]?.ticket
+
+    if (!ticket) return null
+
+    return createTicketStatusAction({
+      apartmentId: data.apartmentState.apartment.id,
+      account,
+      ticketId: ticket.id,
+      title: ticket.title,
+      status: targetTicketStatus.value,
+      statusLabel: targetTicketStatus.label,
+    })
+  }
+
+  return null
+}
+
 function detectAssistantAction(
   question: string,
   currentQuestion: string,
@@ -660,6 +1150,10 @@ function detectAssistantAction(
 ) {
   return (
     parsePaymentAction(question, currentQuestion, account, data) ??
+    parseExpenseAction(currentQuestion, account, data) ??
+    parseTaskAction(currentQuestion, account, data) ??
+    parseTicketAction(currentQuestion, account, data) ??
+    parseStatusAction(currentQuestion, account, data) ??
     parseShoppingAction(currentQuestion, account, data)
   )
 }
@@ -690,6 +1184,8 @@ function answerOverview(data: AssistantData, account: AuthAccount) {
   const openTasks = data.tasks.filter(isTaskOpen)
   const openShopping = data.shoppingItems.filter((item) => item.status === 'open')
   const openTickets = data.tickets.filter((ticket) => ticket.status !== 'closed')
+  const insights = buildInsights(data)
+  const reminders = buildReminders(data)
 
   return [
     `תמונת מצב קצרה לדירה "${data.apartmentState.apartment.name}":`,
@@ -702,6 +1198,8 @@ function answerOverview(data: AssistantData, account: AuthAccount) {
       : credits.length
         ? `• חייבים לך כרגע ${money(credits.reduce((sum, item) => sum + item.amount, 0))}`
         : '• אין כרגע יתרה כספית פתוחה עבורך',
+    insights[0] ? `• תובנה: ${insights[0]}` : '',
+    reminders[0] ? `• תזכורת: ${reminders[0]}` : '',
   ].join('\n')
 }
 
@@ -784,7 +1282,15 @@ function answerTopSpendingQuestion(data: AssistantData, question: string) {
 
 function answerMoneyQuestion(data: AssistantData, account: AuthAccount, question: string) {
   const normalized = normalizeText(question)
-  const { debts, credits, debtReasons, creditReasons } = buildPersonalDebtLines(data, account.id)
+  const mentionedUser = findMentionedUser(question, data.apartmentState)
+  const subjectAccountId =
+    mentionedUser && mentionedUser.id !== account.id ? mentionedUser.id : account.id
+  const subjectName =
+    subjectAccountId === account.id
+      ? 'אתה'
+      : (data.apartmentState.users.find((user) => user.id === subjectAccountId)?.name ?? 'הדייר הזה')
+  const subjectShareLabel = subjectAccountId === account.id ? 'שלך' : `של ${subjectName}`
+  const { debts, credits, debtReasons, creditReasons } = buildPersonalDebtLines(data, subjectAccountId)
 
   if (normalized.includes('חשמל') && (normalized.includes('שולם') || normalized.includes('שילמו') || normalized.includes('שילמנו'))) {
     return answerElectricityQuestion(data, normalized)
@@ -826,7 +1332,9 @@ function answerMoneyQuestion(data: AssistantData, account: AuthAccount, question
 
   if (asksWhoOwesMe) {
     if (!credits.length) {
-      return 'כרגע לא מופיע שמישהו חייב לך כסף לפי הנתונים בדירה.'
+      return subjectAccountId === account.id
+        ? 'כרגע לא מופיע שמישהו חייב לך כסף לפי הנתונים בדירה.'
+        : `כרגע לא מופיע שמישהו חייב ל-${subjectName} כסף לפי הנתונים בדירה.`
     }
 
     const relevantCreditReasons = creditReasons
@@ -834,15 +1342,19 @@ function answerMoneyQuestion(data: AssistantData, account: AuthAccount, question
       .slice(0, 12)
 
     return [
-      `לפי הנתונים, חייבים לך בסך הכול ${money(credits.reduce((sum, item) => sum + item.amount, 0))}:`,
+      subjectAccountId === account.id
+        ? `לפי הנתונים, חייבים לך בסך הכול ${money(credits.reduce((sum, item) => sum + item.amount, 0))}:`
+        : `לפי הנתונים, חייבים ל-${subjectName} בסך הכול ${money(credits.reduce((sum, item) => sum + item.amount, 0))}:`,
       ...credits.map((credit) => `• ${credit.counterpartyName}: ${money(credit.amount)}`),
       '',
       relevantCreditReasons.length
-        ? 'הסיבות המרכזיות לכך שחייבים לך כסף:'
+        ? subjectAccountId === account.id
+          ? 'הסיבות המרכזיות לכך שחייבים לך כסף:'
+          : `הסיבות המרכזיות לכך שחייבים ל-${subjectName} כסף:`
         : 'לא מצאתי פירוט הוצאות מספק שמסביר את היתרה מעבר לקיזוז התשלומים.',
       ...relevantCreditReasons.map((reason) => {
         const category = reason.category ? `, קטגוריה: ${reason.category}` : ''
-        return `• ${reason.description} (${formatDate(reason.date)}${category}) - אתה שילמת ${money(reason.totalAmount)}, והחלק של ${reason.counterpartyName} הוא ${money(reason.yourShare)}`
+        return `• ${reason.description} (${formatDate(reason.date)}${category}) - ${subjectAccountId === account.id ? 'אתה' : subjectName} שילם ${money(reason.totalAmount)}, והחלק של ${reason.counterpartyName} הוא ${money(reason.yourShare)}`
       }),
       '',
       'היתרה הסופית כבר כוללת קיזוז של תשלומים שנרשמו במערכת.',
@@ -851,8 +1363,12 @@ function answerMoneyQuestion(data: AssistantData, account: AuthAccount, question
 
   if (!debts.length) {
     return credits.length
-      ? `אתה לא חייב כרגע כסף לאחרים. להפך, חייבים לך ${money(credits.reduce((sum, item) => sum + item.amount, 0))}.`
-      : 'כרגע לא מופיע שאתה חייב כסף למישהו בדירה.'
+      ? subjectAccountId === account.id
+        ? `אתה לא חייב כרגע כסף לאחרים. להפך, חייבים לך ${money(credits.reduce((sum, item) => sum + item.amount, 0))}.`
+        : `${subjectName} לא חייב כרגע כסף לאחרים. להפך, חייבים לו ${money(credits.reduce((sum, item) => sum + item.amount, 0))}.`
+      : subjectAccountId === account.id
+        ? 'כרגע לא מופיע שאתה חייב כסף למישהו בדירה.'
+        : `כרגע לא מופיע ש-${subjectName} חייב כסף למישהו בדירה.`
   }
 
   const relevantDebtReasons = debtReasons
@@ -860,15 +1376,19 @@ function answerMoneyQuestion(data: AssistantData, account: AuthAccount, question
     .slice(0, 12)
 
   return [
-    `לפי הנתונים, אתה חייב כרגע ${money(debts.reduce((sum, item) => sum + item.amount, 0))}:`,
+    subjectAccountId === account.id
+      ? `לפי הנתונים, אתה חייב כרגע ${money(debts.reduce((sum, item) => sum + item.amount, 0))}:`
+      : `לפי הנתונים, ${subjectName} חייב כרגע ${money(debts.reduce((sum, item) => sum + item.amount, 0))}:`,
     ...debts.map((debt) => `• ל-${debt.counterpartyName}: ${money(debt.amount)}`),
     '',
     relevantDebtReasons.length
-      ? 'ההוצאות המרכזיות שיצרו את החוב:'
+      ? subjectAccountId === account.id
+        ? 'ההוצאות המרכזיות שיצרו את החוב:'
+        : `ההוצאות המרכזיות שיצרו את החוב של ${subjectName}:`
       : 'לא מצאתי פירוט הוצאות שמסביר את החוב מעבר לקיזוז התשלומים.',
     ...relevantDebtReasons.map((reason) => {
       const category = reason.category ? `, קטגוריה: ${reason.category}` : ''
-      return `• ${reason.description} (${formatDate(reason.date)}${category}) - ${reason.counterpartyName} שילם ${money(reason.totalAmount)}, והחלק שלך הוא ${money(reason.yourShare)}`
+      return `• ${reason.description} (${formatDate(reason.date)}${category}) - ${reason.counterpartyName} שילם ${money(reason.totalAmount)}, והחלק ${subjectShareLabel} הוא ${money(reason.yourShare)}`
     }),
     '',
     'הסכום הסופי כולל גם קיזוז של תשלומים שכבר נרשמו במערכת.',
@@ -1082,22 +1602,27 @@ function buildSuggestions(question: string) {
   const normalized = normalizeText(question)
 
   if (includesAny(normalized, ['כסף', 'חייב', 'חוב', 'תשלום', 'הוצאה'])) {
-    return ['למה אני חייב כסף?', 'למה חייבים לי כסף?', 'מה הוצאנו הכי הרבה כסף?', 'האם שולם חשמל החודש?']
+    return [
+      'למה אני חייב כסף?',
+      'למה חייבים לי כסף?',
+      'מי חייב לי הכי הרבה?',
+      'מה הוצאנו הכי הרבה כסף החודש?',
+    ]
   }
 
   if (includesAny(normalized, ['משימ', 'מטל'])) {
-    return ['אילו משימות שלי פתוחות?', 'יש משימות באיחור?', 'תן לי תמונת מצב קצרה']
+    return ['אילו משימות שלי פתוחות?', 'יש משימות באיחור?', 'מה הכי דחוף כרגע?']
   }
 
   if (includesAny(normalized, ['קני', 'לקנות', 'חסר'])) {
-    return ['מה צריך לקנות עכשיו?', 'תוסיף חלב לרשימת קניות', 'יש קניות דחופות?']
+    return ['מה צריך לקנות עכשיו?', 'מה חסר בבית כרגע?', 'תוסיף חלב לרשימת קניות']
   }
 
   if (includesAny(normalized, ['פני', 'תקל', 'תחזוק'])) {
     return ['אילו פניות פתוחות כרגע?', 'יש פניות סגורות לאחרונה?', 'מה הפנייה הכי ישנה שעדיין פתוחה?']
   }
 
-  return ['למה אני חייב כסף?', 'מה צריך לקנות עכשיו?', 'אילו משימות פתוחות יש?', 'האם שולם חשמל החודש?']
+  return defaultSuggestions
 }
 
 export async function getAssistantContextSnapshot(apartmentId: number): Promise<AssistantContextSnapshot> {
@@ -1121,7 +1646,7 @@ export async function answerAssistantQuestion(
     return {
       answer: 'תכתוב שאלה, ואני אענה לפי הנתונים של הדירה שלך.',
       context: snapshot,
-      suggestions: ['למה אני חייב כסף?', 'מה צריך לקנות עכשיו?', 'אילו משימות פתוחות יש?', 'האם שולם חשמל החודש?'],
+      suggestions: defaultSuggestions,
     }
   }
 

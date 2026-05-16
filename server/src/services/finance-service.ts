@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ApiError } from '../lib/api-error.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { listActiveMembershipsByApartmentId } from './membership-service.js'
+import { deleteStoredAttachments, normalizeAttachmentsForStorage } from './storage-service.js'
 
 interface ExpenseRow {
   id: number
@@ -144,6 +145,16 @@ async function getExpenseById(expenseId: number, membershipToAccount: Map<number
   )
 }
 
+async function listExpenseAttachmentRows(expenseId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('expense_attachments')
+    .select('*')
+    .eq('expense_id', expenseId)
+
+  if (error) throw new Error(`Failed to load expense attachments: ${error.message}`)
+  return (data ?? []) as ExpenseAttachmentRow[]
+}
+
 async function requireExpenseRowInApartment(apartmentId: number, expenseId: number) {
   const { data, error } = await supabaseAdmin
     .from('expenses')
@@ -251,6 +262,11 @@ export async function createExpense(input: {
   const participantMembershipIds = input.participantAccountIds.map((accountId) =>
     requireMembershipId(accountToMembership, accountId, 'an expense participant'),
   )
+  const normalizedAttachments = await normalizeAttachmentsForStorage(
+    input.apartmentId,
+    `expense-${input.paidByAccountId}`,
+    input.attachments,
+  )
 
   const { data, error } = await supabaseAdmin
     .from('expenses')
@@ -280,9 +296,9 @@ export async function createExpense(input: {
     if (participantsError) throw new Error(`Failed to create expense participants: ${participantsError.message}`)
   }
 
-  if (input.attachments?.length) {
+  if (normalizedAttachments.length) {
     const { error: attachmentsError } = await supabaseAdmin.from('expense_attachments').insert(
-      input.attachments.map((attachment) => ({
+      normalizedAttachments.map((attachment) => ({
         id: toUuid(attachment.id),
         expense_id: expenseRow.id,
         file_name: attachment.name,
@@ -315,6 +331,13 @@ export async function updateExpense(input: {
   const participantMembershipIds = input.participantAccountIds.map((accountId) =>
     requireMembershipId(accountToMembership, accountId, 'an expense participant'),
   )
+  const normalizedAttachments = input.attachments
+    ? await normalizeAttachmentsForStorage(
+        input.apartmentId,
+        `expense-${input.expenseId}`,
+        input.attachments,
+      )
+    : undefined
 
   const { error } = await supabaseAdmin
     .from('expenses')
@@ -350,6 +373,10 @@ export async function updateExpense(input: {
     if (participantsError) throw new Error(`Failed to update expense participants: ${participantsError.message}`)
   }
 
+  const existingAttachments = normalizedAttachments
+    ? await listExpenseAttachmentRows(input.expenseId)
+    : []
+
   const { error: deleteAttachmentsError } = await supabaseAdmin
     .from('expense_attachments')
     .delete()
@@ -358,10 +385,13 @@ export async function updateExpense(input: {
   if (deleteAttachmentsError) {
     throw new Error(`Failed to reset expense attachments: ${deleteAttachmentsError.message}`)
   }
+  if (normalizedAttachments) {
+    await deleteStoredAttachments(existingAttachments.map((attachment) => attachment.file_url))
+  }
 
-  if (input.attachments?.length) {
+  if (normalizedAttachments?.length) {
     const { error: attachmentsError } = await supabaseAdmin.from('expense_attachments').insert(
-      input.attachments.map((attachment) => ({
+      normalizedAttachments.map((attachment) => ({
         id: toUuid(attachment.id),
         expense_id: input.expenseId,
         file_name: attachment.name,

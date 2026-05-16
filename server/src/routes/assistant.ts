@@ -95,6 +95,7 @@ assistantRouter.post(
         token: body.token,
         apartmentId,
         account: request.auth.account,
+        membership: request.auth.membership,
       })
       response.json(result)
     } catch (error) {

@@ -78,7 +78,7 @@ export function JoinApartmentPage() {
     : Boolean(localInviteApartment && inviteToken)
 
   const apartmentName =
-    remoteApartmentName ?? localInviteApartment?.apartment.name ?? 'הדירה המשותפת'
+    remoteApartmentName ?? localInviteApartment?.apartment.name ?? 'הזמנה לדירה'
   const roleLabel = inviteRole === 'landlord' ? 'בעל דירה' : 'שותף'
 
   function rememberInvite() {
