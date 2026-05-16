@@ -3468,15 +3468,15 @@ input {
     width: calc(100vw - 24px);
     max-width: calc(100vw - 24px);
     justify-content: flex-start;
-    padding-inline: 8px;
-    gap: 6px;
+    padding-inline: 6px;
+    gap: 4px;
   }
 
   .bottom-nav__link {
     flex: 0 0 auto;
-    min-width: 60px;
-    padding: 8px 10px;
-    font-size: 0.68rem;
+    min-width: 52px;
+    padding: 7px 7px;
+    font-size: 0.64rem;
   }
 
   .home-updates--figma .home-updates__item {
