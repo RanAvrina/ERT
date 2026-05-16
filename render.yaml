@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: ert-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RATE_LIMIT_MAX
+        value: "120"
+      - key: AUTH_RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: AUTH_RATE_LIMIT_MAX
+        value: "20"
