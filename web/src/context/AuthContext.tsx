@@ -333,6 +333,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         if (isSupabaseConfigured) {
+          await signOutAuth().catch(() => undefined)
+          persistUser(null)
+          clearActiveApartment()
+
           const authUser = await signInWithSupabasePassword({ email: normalizedEmail, password })
 
           let snapshot = await readBootstrapViaApi()

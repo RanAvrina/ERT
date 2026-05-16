@@ -40,7 +40,7 @@ export async function signInWithPassword(input: { email: string; password: strin
 
 export async function signOutAuth() {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
-  const { error } = await client.auth.signOut()
+  const { error } = await client.auth.signOut({ scope: 'local' })
   invalidateApiAuthState()
   if (error) throw new Error(error.message)
 }

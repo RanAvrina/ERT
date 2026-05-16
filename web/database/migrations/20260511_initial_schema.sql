@@ -6,7 +6,6 @@ create table if not exists accounts (
   full_name varchar(120) not null,
   email varchar(255) not null,
   phone varchar(32),
-  password_hash text not null,
   status varchar(16) not null default 'active',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

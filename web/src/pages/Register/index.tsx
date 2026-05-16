@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../../components/auth/AuthShell'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
@@ -155,7 +155,37 @@ export function RegisterPage() {
     )
   }
 
-  if (user) return <Navigate to={appRoutes.dashboard} replace />
+  if (user) {
+    return (
+      <AuthShell
+        title="החלפת חשבון"
+        subtitle="כרגע יש session פעיל. כדי לפתוח חשבון חדש צריך להתנתק קודם."
+        hideIntro
+        footer={
+          <p className="auth-card__footer-text">
+            רוצים לחזור למערכת?{' '}
+            <Link to={appRoutes.dashboard} className="link">
+              חזרה למסך הראשי
+            </Link>
+          </p>
+        }
+      >
+        <div className="form-stack">
+          <p className="form-message">
+            מחוברים כעת כ{user.name} ({user.email}).
+          </p>
+          {error ? <p className="form-message form-message--error">{error}</p> : null}
+          <button
+            type="button"
+            className="btn btn--primary btn--block"
+            onClick={logoutForInviteRegister}
+          >
+            התנתק ופתח חשבון אחר
+          </button>
+        </div>
+      </AuthShell>
+    )
+  }
 
   if (createdAccountEmail) {
     return (

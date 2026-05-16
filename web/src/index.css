@@ -3465,18 +3465,22 @@ input {
   }
 
   .bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     width: calc(100vw - 24px);
     max-width: calc(100vw - 24px);
-    justify-content: flex-start;
-    padding-inline: 6px;
-    gap: 4px;
+    justify-content: stretch;
+    padding-inline: 4px;
+    gap: 2px;
+    overflow: hidden;
   }
 
   .bottom-nav__link {
-    flex: 0 0 auto;
-    min-width: 52px;
-    padding: 7px 7px;
-    font-size: 0.64rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    padding: 7px 4px;
+    font-size: 0.61rem;
   }
 
   .home-updates--figma .home-updates__item {

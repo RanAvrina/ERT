@@ -67,7 +67,6 @@ export async function createAccount(input: {
       email: normalizedEmail,
       full_name: input.fullName.trim(),
       phone: input.phone?.trim() || null,
-      password_hash: '',
       status: 'active',
     })
     .select('*')

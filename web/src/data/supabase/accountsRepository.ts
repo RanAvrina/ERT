@@ -29,14 +29,12 @@ export async function createAccountRow(account: {
   name: string
   email: string
   phone: string
-  passwordHash?: string
 }) {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
   const payload = {
     full_name: account.name.trim(),
     email: account.email.trim().toLowerCase(),
     phone: account.phone.trim() || null,
-    password_hash: account.passwordHash ?? 'supabase-auth',
     status: 'active' as const,
   }
   const { data, error } = await client.from(table).insert(payload).select('*').single()
