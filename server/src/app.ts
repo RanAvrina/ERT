@@ -10,14 +10,27 @@ export function createApp() {
   const app = express()
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
+  const normalizeOrigin = (origin: string) => origin.trim().replace(/\/+$/, '')
   const allowedOrigins = env.CLIENT_ORIGIN.split(',')
-    .map((origin) => origin.trim())
+    .map((origin) => normalizeOrigin(origin))
     .filter(Boolean)
 
   function isAllowedOrigin(origin?: string) {
     if (!origin) return true
-    if (allowedOrigins.includes(origin)) return true
-    return /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)
+    const normalizedOrigin = normalizeOrigin(origin)
+    if (allowedOrigins.includes(normalizedOrigin)) return true
+    if (/^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(normalizedOrigin)) return true
+
+    try {
+      const { hostname, protocol } = new URL(normalizedOrigin)
+      if ((protocol === 'https:' || protocol === 'http:') && hostname.endsWith('.vercel.app')) {
+        return true
+      }
+    } catch {
+      return false
+    }
+
+    return false
   }
 
   app.use(
