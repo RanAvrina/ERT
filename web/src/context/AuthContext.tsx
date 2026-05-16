@@ -333,10 +333,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         if (isSupabaseConfigured) {
-          await signInWithSupabasePassword({ email: normalizedEmail, password })
+          const authUser = await signInWithSupabasePassword({ email: normalizedEmail, password })
 
-          const snapshot = await readBootstrapViaApi()
-          const account = snapshot.account
+          let snapshot = await readBootstrapViaApi()
+          let account = snapshot.account
+
+          if (!account && authUser?.email) {
+            await ensureAccountViaApi({
+              fullName:
+                typeof authUser.user_metadata?.full_name === 'string' &&
+                authUser.user_metadata.full_name.trim()
+                  ? authUser.user_metadata.full_name.trim()
+                  : normalizedEmail,
+              phone:
+                typeof authUser.user_metadata?.phone === 'string' &&
+                authUser.user_metadata.phone.trim()
+                  ? authUser.user_metadata.phone.trim()
+                  : null,
+            })
+
+            snapshot = await readBootstrapViaApi()
+            account = snapshot.account
+          }
 
           if (!account) {
             return {

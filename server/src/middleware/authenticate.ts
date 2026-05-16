@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express'
-import { supabaseAuthClient } from '../lib/supabase.js'
+import { supabaseAdmin } from '../lib/supabase.js'
 import { findAccountByEmail } from '../services/account-service.js'
 import { findActiveMembershipByAccountId } from '../services/membership-service.js'
 import type { AuthAccount, AuthMembership } from '../types/auth.js'
@@ -41,7 +41,7 @@ async function resolveAuthSession(request: Request, response: Response) {
     return cachedSession.value
   }
 
-  const { data, error } = await supabaseAuthClient.auth.getUser(token)
+  const { data, error } = await supabaseAdmin.auth.getUser(token)
   if (error || !data.user?.email || !data.user.id) {
     response.status(401).json({ error: 'Invalid or expired session token.' })
     return null

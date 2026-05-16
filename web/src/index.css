@@ -209,10 +209,17 @@ input {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 22px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   transition:
     opacity var(--transition-fast),
     transform var(--transition-fast),
     visibility var(--transition-fast);
+}
+
+.bottom-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .app-shell:has(.modal-backdrop) .bottom-nav {
@@ -3155,7 +3162,7 @@ input {
   .assistant-panel {
     left: 12px;
     right: 12px;
-    bottom: 84px;
+    bottom: 124px;
     width: auto;
     height: min(72dvh, 640px);
     gap: 10px;
@@ -3164,8 +3171,9 @@ input {
   }
 
   .assistant-launcher {
-    right: 12px;
-    bottom: 16px;
+    left: 12px;
+    right: auto;
+    bottom: 96px;
     width: 54px;
     height: 54px;
     border-radius: 18px;
@@ -3459,14 +3467,16 @@ input {
   .bottom-nav {
     width: calc(100vw - 24px);
     max-width: calc(100vw - 24px);
-    justify-content: space-between;
+    justify-content: flex-start;
     padding-inline: 8px;
+    gap: 6px;
   }
 
   .bottom-nav__link {
-    min-width: 0;
-    padding: 9px 8px;
-    font-size: 0.69rem;
+    flex: 0 0 auto;
+    min-width: 60px;
+    padding: 8px 10px;
+    font-size: 0.68rem;
   }
 
   .home-updates--figma .home-updates__item {
