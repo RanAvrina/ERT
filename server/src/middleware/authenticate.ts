@@ -9,6 +9,8 @@ const AUTH_CACHE_TTL_MS = 15_000
 interface CachedAuthSession {
   authUserId: string
   authEmail: string
+  authFullName: string | null
+  authPhone: string | null
 }
 
 interface CachedAuthContext {
@@ -50,6 +52,14 @@ async function resolveAuthSession(request: Request, response: Response) {
   const nextSession = {
     authUserId: data.user.id,
     authEmail: data.user.email,
+    authFullName:
+      typeof data.user.user_metadata?.full_name === 'string'
+        ? data.user.user_metadata.full_name
+        : null,
+    authPhone:
+      typeof data.user.user_metadata?.phone === 'string'
+        ? data.user.user_metadata.phone
+        : null,
   }
   sessionCache.set(token, {
     value: nextSession,

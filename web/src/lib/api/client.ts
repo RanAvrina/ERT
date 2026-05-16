@@ -67,6 +67,24 @@ function clearGetCache() {
   inflightGetRequests.clear()
 }
 
+export function invalidateApiAuthState() {
+  cachedAccessToken = null
+  cachedAccessTokenExpiresAt = 0
+  inflightAccessTokenPromise = null
+  clearGetCache()
+}
+
+export function primeApiAccessToken(token: string | null, expiresAt?: number | null) {
+  if (!token) {
+    invalidateApiAuthState()
+    return
+  }
+
+  cachedAccessToken = token
+  cachedAccessTokenExpiresAt = expiresAt ? expiresAt * 1000 : Date.now() + 60_000
+  inflightAccessTokenPromise = null
+}
+
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}) {
   if (!apiBaseUrl) {
     throw new Error('API is not configured.')

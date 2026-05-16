@@ -8,6 +8,8 @@ declare global {
         | {
             authUserId: string
             authEmail: string
+            authFullName: string | null
+            authPhone: string | null
           }
         | null
     }

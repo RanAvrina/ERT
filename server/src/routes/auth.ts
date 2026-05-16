@@ -37,14 +37,16 @@ authRouter.get('/bootstrap', authenticateSession, async (request, response, next
       return
     }
 
-    const account = await findAccountByEmail(email)
+    let account = await findAccountByEmail(email)
     if (!account) {
-      response.json({
-        account: null,
-        membership: null,
-        apartmentState: null,
+      account = await createAccount({
+        email,
+        fullName:
+          request.authSession?.authFullName?.trim() ||
+          email.split('@')[0] ||
+          'משתמש חדש',
+        phone: request.authSession?.authPhone?.trim() || null,
       })
-      return
     }
 
     const membership = await findActiveMembershipByAccountId(account.id)

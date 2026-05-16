@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase/client'
+import { invalidateApiAuthState, primeApiAccessToken } from '../../lib/api/client'
 import { ensureValue } from './errors'
 import type { AuthChangeEvent, User } from '@supabase/supabase-js'
 
@@ -21,6 +22,7 @@ export async function signUpWithPassword(input: {
   })
 
   if (error) throw new Error(error.message)
+  primeApiAccessToken(data.session?.access_token ?? null, data.session?.expires_at ?? null)
   return data.user
 }
 
@@ -32,12 +34,14 @@ export async function signInWithPassword(input: { email: string; password: strin
   })
 
   if (error) throw new Error(error.message)
+  primeApiAccessToken(data.session?.access_token ?? null, data.session?.expires_at ?? null)
   return data.user
 }
 
 export async function signOutAuth() {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
   const { error } = await client.auth.signOut()
+  invalidateApiAuthState()
   if (error) throw new Error(error.message)
 }
 
@@ -85,6 +89,7 @@ export function subscribeToAuthChanges(
   const {
     data: { subscription },
   } = client.auth.onAuthStateChange((event, session) => {
+    primeApiAccessToken(session?.access_token ?? null, session?.expires_at ?? null)
     callback(event, session?.user ?? null)
   })
 
