@@ -256,14 +256,6 @@ create policy accounts_self_select on accounts
   );
 
 drop policy if exists accounts_self_update on accounts;
-create policy accounts_self_update on accounts
-  for update to authenticated
-  using (
-    lower(trim(email)) = lower(trim(coalesce(auth.jwt() ->> 'email', '')))
-  )
-  with check (
-    lower(trim(email)) = lower(trim(coalesce(auth.jwt() ->> 'email', '')))
-  );
 
 drop policy if exists apartment_memberships_self_select on apartment_memberships;
 create policy apartment_memberships_self_select on apartment_memberships

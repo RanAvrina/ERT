@@ -73,6 +73,8 @@ ticketsRouter.patch('/:ticketId', async (request, response, next) => {
     const ticket = await updateTicket({
       apartmentId,
       ticketId,
+      actorAccountId: request.auth!.account.id,
+      actorRole: request.auth!.membership!.role,
       title: body.title,
       description: body.description,
       category: body.category,
@@ -92,6 +94,8 @@ ticketsRouter.put('/:ticketId', async (request, response, next) => {
     const ticket = await updateTicket({
       apartmentId,
       ticketId,
+      actorAccountId: request.auth!.account.id,
+      actorRole: request.auth!.membership!.role,
       title: body.title,
       description: body.description,
       category: body.category,
@@ -111,6 +115,7 @@ ticketsRouter.patch('/:ticketId/status', async (request, response, next) => {
     const ticket = await updateTicketStatus({
       apartmentId,
       ticketId,
+      actorRole: request.auth!.membership!.role,
       status: body.status,
     })
     response.json({ ticket })
@@ -138,8 +143,14 @@ ticketsRouter.post('/:ticketId/comments', async (request, response, next) => {
 
 ticketsRouter.delete('/:ticketId', async (request, response, next) => {
   try {
+    const apartmentId = getApartmentIdFromParams(request)
     const ticketId = getResourceIdFromParams(request, 'ticketId')
-    await deleteTicket(ticketId)
+    await deleteTicket({
+      apartmentId,
+      ticketId,
+      actorAccountId: request.auth!.account.id,
+      actorRole: request.auth!.membership!.role,
+    })
     response.status(204).send()
   } catch (error) {
     next(error)

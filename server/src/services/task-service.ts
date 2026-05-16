@@ -59,6 +59,28 @@ async function getTaskById(taskId: number, membershipToAccount: Map<number, numb
   return mapTask(data as TaskRow, membershipToAccount)
 }
 
+async function requireTaskRowInApartment(apartmentId: number, taskId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .select('*')
+    .eq('id', taskId)
+    .single()
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new ApiError(404, 'Task not found.')
+    }
+    throw new Error(`Failed to load task: ${error.message}`)
+  }
+
+  const row = data as TaskRow
+  if (row.apartment_id !== apartmentId) {
+    throw new ApiError(404, 'Task not found in this apartment.')
+  }
+
+  return row
+}
+
 export async function listTasksByApartmentId(apartmentId: number) {
   const { membershipToAccount } = await loadMembershipMaps(apartmentId)
   const { data, error } = await supabaseAdmin
@@ -115,6 +137,7 @@ export async function updateTask(input: {
   status: TaskRow['status']
 }) {
   const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  await requireTaskRowInApartment(input.apartmentId, input.taskId)
   const assigneeMembershipId =
     input.assigneeAccountId == null ? null : requireMembershipId(accountToMembership, input.assigneeAccountId, 'the task assignee')
 
@@ -134,7 +157,8 @@ export async function updateTask(input: {
   return getTaskById(input.taskId, membershipToAccount)
 }
 
-export async function deleteTask(taskId: number) {
+export async function deleteTask(apartmentId: number, taskId: number) {
+  await requireTaskRowInApartment(apartmentId, taskId)
   const { error } = await supabaseAdmin.from('tasks').delete().eq('id', taskId)
   if (error) throw new Error(`Failed to delete task: ${error.message}`)
 }

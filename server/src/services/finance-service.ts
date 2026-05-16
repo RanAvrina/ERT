@@ -144,6 +144,28 @@ async function getExpenseById(expenseId: number, membershipToAccount: Map<number
   )
 }
 
+async function requireExpenseRowInApartment(apartmentId: number, expenseId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('expenses')
+    .select('*')
+    .eq('id', expenseId)
+    .single()
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new ApiError(404, 'Expense not found.')
+    }
+    throw new Error(`Failed to load expense: ${error.message}`)
+  }
+
+  const row = data as ExpenseRow
+  if (row.apartment_id !== apartmentId) {
+    throw new ApiError(404, 'Expense not found in this apartment.')
+  }
+
+  return row
+}
+
 async function getPaymentById(paymentId: number, membershipToAccount: Map<number, number>) {
   const { data, error } = await supabaseAdmin
     .from('payments')
@@ -153,6 +175,28 @@ async function getPaymentById(paymentId: number, membershipToAccount: Map<number
 
   if (error) throw new Error(`Failed to load payment: ${error.message}`)
   return mapPayment(data as PaymentRow, membershipToAccount)
+}
+
+async function requirePaymentRowInApartment(apartmentId: number, paymentId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('payments')
+    .select('*')
+    .eq('id', paymentId)
+    .single()
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new ApiError(404, 'Payment not found.')
+    }
+    throw new Error(`Failed to load payment: ${error.message}`)
+  }
+
+  const row = data as PaymentRow
+  if (row.apartment_id !== apartmentId) {
+    throw new ApiError(404, 'Payment not found in this apartment.')
+  }
+
+  return row
 }
 
 export async function listExpensesByApartmentId(apartmentId: number) {
@@ -266,6 +310,7 @@ export async function updateExpense(input: {
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
   const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  await requireExpenseRowInApartment(input.apartmentId, input.expenseId)
   const paidByMembershipId = requireMembershipId(accountToMembership, input.paidByAccountId, 'the payer')
   const participantMembershipIds = input.participantAccountIds.map((accountId) =>
     requireMembershipId(accountToMembership, accountId, 'an expense participant'),
@@ -332,7 +377,8 @@ export async function updateExpense(input: {
   return getExpenseById(input.expenseId, membershipToAccount)
 }
 
-export async function softDeleteExpense(expenseId: number) {
+export async function softDeleteExpense(apartmentId: number, expenseId: number) {
+  await requireExpenseRowInApartment(apartmentId, expenseId)
   const { error } = await supabaseAdmin
     .from('expenses')
     .update({
@@ -398,6 +444,7 @@ export async function updatePayment(input: {
   note?: string | null
 }) {
   const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  await requirePaymentRowInApartment(input.apartmentId, input.paymentId)
   const payerMembershipId = requireMembershipId(accountToMembership, input.payerAccountId, 'the payer')
   const payeeMembershipId = requireMembershipId(accountToMembership, input.payeeAccountId, 'the payee')
 
@@ -417,7 +464,8 @@ export async function updatePayment(input: {
   return getPaymentById(input.paymentId, membershipToAccount)
 }
 
-export async function softDeletePayment(paymentId: number) {
+export async function softDeletePayment(apartmentId: number, paymentId: number) {
+  await requirePaymentRowInApartment(apartmentId, paymentId)
   const { error } = await supabaseAdmin
     .from('payments')
     .update({

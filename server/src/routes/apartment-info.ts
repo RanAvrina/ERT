@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { authenticate } from '../middleware/authenticate.js'
 import { requireAuth } from '../middleware/require-auth.js'
 import { requireApartmentMembership } from '../middleware/require-apartment-membership.js'
+import { requireRole } from '../middleware/require-role.js'
 import { getApartmentIdFromParams, getResourceIdFromParams } from '../lib/request.js'
 import { validateBody } from '../lib/validate.js'
 import { createApartmentInfoItem, deleteApartmentInfoItem, listApartmentInfoItemsByApartmentId, updateApartmentInfoItem } from '../services/apartment-info-service.js'
@@ -40,7 +41,7 @@ apartmentInfoRouter.get('/', async (request, response, next) => {
   }
 })
 
-apartmentInfoRouter.post('/', async (request, response, next) => {
+apartmentInfoRouter.post('/', requireRole(['admin', 'landlord']), async (request, response, next) => {
   try {
     const apartmentId = getApartmentIdFromParams(request)
     const body = validateBody(apartmentInfoBodySchema, request.body)
@@ -61,7 +62,7 @@ apartmentInfoRouter.post('/', async (request, response, next) => {
   }
 })
 
-apartmentInfoRouter.patch('/:itemId', async (request, response, next) => {
+apartmentInfoRouter.patch('/:itemId', requireRole(['admin', 'landlord']), async (request, response, next) => {
   try {
     const apartmentId = getApartmentIdFromParams(request)
     const itemId = getResourceIdFromParams(request, 'itemId')
@@ -84,7 +85,7 @@ apartmentInfoRouter.patch('/:itemId', async (request, response, next) => {
   }
 })
 
-apartmentInfoRouter.put('/:itemId', async (request, response, next) => {
+apartmentInfoRouter.put('/:itemId', requireRole(['admin', 'landlord']), async (request, response, next) => {
   try {
     const apartmentId = getApartmentIdFromParams(request)
     const itemId = getResourceIdFromParams(request, 'itemId')
@@ -107,10 +108,11 @@ apartmentInfoRouter.put('/:itemId', async (request, response, next) => {
   }
 })
 
-apartmentInfoRouter.delete('/:itemId', async (request, response, next) => {
+apartmentInfoRouter.delete('/:itemId', requireRole(['admin', 'landlord']), async (request, response, next) => {
   try {
+    const apartmentId = getApartmentIdFromParams(request)
     const itemId = getResourceIdFromParams(request, 'itemId')
-    await deleteApartmentInfoItem(itemId)
+    await deleteApartmentInfoItem(apartmentId, itemId)
     response.status(204).send()
   } catch (error) {
     next(error)

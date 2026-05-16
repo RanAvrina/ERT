@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { ApiError } from '../lib/api-error.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 
 interface ApartmentInfoItemRow {
@@ -79,6 +80,28 @@ async function getApartmentInfoItemById(itemId: number) {
     data as ApartmentInfoItemRow,
     (attachmentsData ?? []) as ApartmentInfoAttachmentRow[],
   )
+}
+
+async function requireApartmentInfoItemRowInApartment(apartmentId: number, itemId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('apartment_info_items')
+    .select('*')
+    .eq('id', itemId)
+    .single()
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new ApiError(404, 'Apartment info item not found.')
+    }
+    throw new Error(`Failed to load apartment info item: ${error.message}`)
+  }
+
+  const row = data as ApartmentInfoItemRow
+  if (row.apartment_id !== apartmentId) {
+    throw new ApiError(404, 'Apartment info item not found in this apartment.')
+  }
+
+  return row
 }
 
 export async function listApartmentInfoItemsByApartmentId(apartmentId: number) {
@@ -170,6 +193,7 @@ export async function updateApartmentInfoItem(input: {
   notes: string | null
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
+  await requireApartmentInfoItemRowInApartment(input.apartmentId, input.itemId)
   const { error } = await supabaseAdmin
     .from('apartment_info_items')
     .update({
@@ -213,7 +237,8 @@ export async function updateApartmentInfoItem(input: {
   return getApartmentInfoItemById(input.itemId)
 }
 
-export async function deleteApartmentInfoItem(itemId: number) {
+export async function deleteApartmentInfoItem(apartmentId: number, itemId: number) {
+  await requireApartmentInfoItemRowInApartment(apartmentId, itemId)
   const { error } = await supabaseAdmin.from('apartment_info_items').delete().eq('id', itemId)
   if (error) throw new Error(`Failed to delete apartment info item: ${error.message}`)
 }

@@ -82,8 +82,9 @@ tasksRouter.put('/:taskId', async (request, response, next) => {
 
 tasksRouter.delete('/:taskId', async (request, response, next) => {
   try {
+    const apartmentId = getApartmentIdFromParams(request)
     const taskId = getResourceIdFromParams(request, 'taskId')
-    await deleteTask(taskId)
+    await deleteTask(apartmentId, taskId)
     response.status(204).send()
   } catch (error) {
     next(error)

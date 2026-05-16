@@ -1,19 +1,20 @@
 import type { PendingInviteRepository } from '../contracts/repositories'
 import type { PendingInvite } from '../../utils/invite'
-import { persistenceAdapter } from '../persistence'
+import { localStorageAdapter } from '../persistence/localStorageAdapter'
 import { storageKeys } from './storageKeys'
 
 const pendingInviteRepository: PendingInviteRepository = {
   savePendingInviteRecord(invite: PendingInvite) {
-    persistenceAdapter.write(storageKeys.pendingInvite, invite)
+    // Pending invite must survive auth redirects and account creation flows.
+    localStorageAdapter.write(storageKeys.pendingInvite, invite)
   },
 
   readPendingInviteRecord() {
-    return persistenceAdapter.read<PendingInvite | null>(storageKeys.pendingInvite, null)
+    return localStorageAdapter.read<PendingInvite | null>(storageKeys.pendingInvite, null)
   },
 
   clearPendingInviteRecord() {
-    persistenceAdapter.remove(storageKeys.pendingInvite)
+    localStorageAdapter.remove(storageKeys.pendingInvite)
   },
 }
 

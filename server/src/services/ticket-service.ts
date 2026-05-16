@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ApiError } from '../lib/api-error.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import type { AuthMembership } from '../types/auth.js'
 import { listActiveMembershipsByApartmentId } from './membership-service.js'
 
 type TicketCategory = 'issue' | 'request' | 'finance' | 'other'
@@ -129,6 +130,53 @@ async function getTicketById(ticketId: number, membershipToAccount: Map<number, 
   )
 }
 
+async function requireTicketRowInApartment(apartmentId: number, ticketId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('maintenance_tickets')
+    .select('*')
+    .eq('id', ticketId)
+    .single()
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new ApiError(404, 'Ticket not found.')
+    }
+    throw new Error(`Failed to load ticket: ${error.message}`)
+  }
+
+  const row = data as MaintenanceTicketRow
+  if (row.apartment_id !== apartmentId) {
+    throw new ApiError(404, 'Ticket not found in this apartment.')
+  }
+
+  return row
+}
+
+function canManageTicket(role: AuthMembership['role']) {
+  return role === 'admin' || role === 'landlord'
+}
+
+function assertCanEditTicket(row: MaintenanceTicketRow, actorMembershipId: number, actorRole: AuthMembership['role']) {
+  if (canManageTicket(actorRole)) return
+  if (row.created_by_membership_id === actorMembershipId) return
+  throw new ApiError(403, 'You do not have permission to edit this ticket.')
+}
+
+function assertCanDeleteTicket(
+  row: MaintenanceTicketRow,
+  actorMembershipId: number,
+  actorRole: AuthMembership['role'],
+) {
+  if (canManageTicket(actorRole)) return
+  if (row.created_by_membership_id === actorMembershipId) return
+  throw new ApiError(403, 'You do not have permission to delete this ticket.')
+}
+
+function assertCanChangeTicketStatus(actorRole: AuthMembership['role']) {
+  if (canManageTicket(actorRole)) return
+  throw new ApiError(403, 'You do not have permission to change ticket status.')
+}
+
 export async function listTicketsByApartmentId(apartmentId: number) {
   const { membershipToAccount } = await loadMembershipMaps(apartmentId)
   const { data, error } = await supabaseAdmin
@@ -230,12 +278,17 @@ export async function createTicket(input: {
 export async function updateTicket(input: {
   apartmentId: number
   ticketId: number
+  actorAccountId: number
+  actorRole: AuthMembership['role']
   title: string
   description: string
   category: TicketCategory
   attachments?: Array<{ id?: string; name: string; type: string; size: number; url: string }>
 }) {
-  const { membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  const actorMembershipId = requireMembershipId(accountToMembership, input.actorAccountId, 'the ticket editor')
+  const existingTicket = await requireTicketRowInApartment(input.apartmentId, input.ticketId)
+  assertCanEditTicket(existingTicket, actorMembershipId, input.actorRole)
 
   const { error } = await supabaseAdmin
     .from('maintenance_tickets')
@@ -279,9 +332,12 @@ export async function updateTicket(input: {
 export async function updateTicketStatus(input: {
   apartmentId: number
   ticketId: number
+  actorRole: AuthMembership['role']
   status: TicketStatus
 }) {
   const { membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  await requireTicketRowInApartment(input.apartmentId, input.ticketId)
+  assertCanChangeTicketStatus(input.actorRole)
   const { error } = await supabaseAdmin
     .from('maintenance_tickets')
     .update({
@@ -294,8 +350,17 @@ export async function updateTicketStatus(input: {
   return getTicketById(input.ticketId, membershipToAccount)
 }
 
-export async function deleteTicket(ticketId: number) {
-  const { error } = await supabaseAdmin.from('maintenance_tickets').delete().eq('id', ticketId)
+export async function deleteTicket(input: {
+  apartmentId: number
+  ticketId: number
+  actorAccountId: number
+  actorRole: AuthMembership['role']
+}) {
+  const { accountToMembership } = await loadMembershipMaps(input.apartmentId)
+  const actorMembershipId = requireMembershipId(accountToMembership, input.actorAccountId, 'the ticket owner')
+  const existingTicket = await requireTicketRowInApartment(input.apartmentId, input.ticketId)
+  assertCanDeleteTicket(existingTicket, actorMembershipId, input.actorRole)
+  const { error } = await supabaseAdmin.from('maintenance_tickets').delete().eq('id', input.ticketId)
   if (error) throw new Error(`Failed to delete ticket: ${error.message}`)
 }
 
@@ -306,6 +371,7 @@ export async function createTicketComment(input: {
   text: string
 }) {
   const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  await requireTicketRowInApartment(input.apartmentId, input.ticketId)
   const membershipId = requireMembershipId(accountToMembership, input.accountId, 'the comment author')
 
   const { data, error } = await supabaseAdmin

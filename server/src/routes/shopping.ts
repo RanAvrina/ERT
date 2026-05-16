@@ -95,8 +95,9 @@ shoppingRouter.put('/:itemId', async (request, response, next) => {
 
 shoppingRouter.delete('/:itemId', async (request, response, next) => {
   try {
+    const apartmentId = getApartmentIdFromParams(request)
     const itemId = getResourceIdFromParams(request, 'itemId')
-    await deleteShoppingItem(itemId)
+    await deleteShoppingItem(apartmentId, itemId)
     response.status(204).send()
   } catch (error) {
     next(error)

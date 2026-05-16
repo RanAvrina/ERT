@@ -69,8 +69,9 @@ paymentsRouter.put('/:paymentId', updatePaymentHandler)
 
 paymentsRouter.delete('/:paymentId', async (request, response, next) => {
   try {
+    const apartmentId = getApartmentIdFromParams(request)
     const paymentId = getResourceIdFromParams(request, 'paymentId')
-    await softDeletePayment(paymentId)
+    await softDeletePayment(apartmentId, paymentId)
     response.status(204).send()
   } catch (error) {
     next(error)

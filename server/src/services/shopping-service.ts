@@ -72,6 +72,28 @@ async function getShoppingItemById(itemId: number, membershipToAccount: Map<numb
   return mapShoppingItem(data as ShoppingItemRow, membershipToAccount)
 }
 
+async function requireShoppingItemRowInApartment(apartmentId: number, itemId: number) {
+  const { data, error } = await supabaseAdmin
+    .from('shopping_items')
+    .select('*')
+    .eq('id', itemId)
+    .single()
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new ApiError(404, 'Shopping item not found.')
+    }
+    throw new Error(`Failed to load shopping item: ${error.message}`)
+  }
+
+  const row = data as ShoppingItemRow
+  if (row.apartment_id !== apartmentId) {
+    throw new ApiError(404, 'Shopping item not found in this apartment.')
+  }
+
+  return row
+}
+
 async function ensureDefaultShoppingList(apartmentId: number, actorAccountId: number) {
   const { accountToMembership } = await loadMembershipMaps(apartmentId)
   const createdByMembershipId = requireMembershipId(accountToMembership, actorAccountId, 'the shopping list creator')
@@ -164,6 +186,7 @@ export async function updateShoppingItem(input: {
   purchasedAt: string | null
 }) {
   const { accountToMembership, membershipToAccount } = await loadMembershipMaps(input.apartmentId)
+  await requireShoppingItemRowInApartment(input.apartmentId, input.itemId)
   const purchasedByMembershipId =
     input.status === 'purchased'
       ? requireMembershipId(accountToMembership, input.purchasedByAccountId ?? input.actorAccountId, 'the purchasing account')
@@ -186,7 +209,8 @@ export async function updateShoppingItem(input: {
   return getShoppingItemById(input.itemId, membershipToAccount)
 }
 
-export async function deleteShoppingItem(itemId: number) {
+export async function deleteShoppingItem(apartmentId: number, itemId: number) {
+  await requireShoppingItemRowInApartment(apartmentId, itemId)
   const { error } = await supabaseAdmin.from('shopping_items').delete().eq('id', itemId)
   if (error) throw new Error(`Failed to delete shopping item: ${error.message}`)
 }

@@ -24,6 +24,7 @@ export function RoommatesPage() {
   const [roommateToRemove, setRoommateToRemove] = useState<number | null>(null)
   const roommates = (current?.roommates ?? []).filter((roommate) => roommate.status === 'active')
   const isAdmin = user?.role === 'admin'
+  const usesInviteOnlyFlow = isSupabaseConfigured
 
   function closeLandlordModal() {
     setIsLandlordModalOpen(false)
@@ -61,12 +62,14 @@ export function RoommatesPage() {
   }
 
   async function openInviteModal() {
-    const nextInviteLink = isSupabaseConfigured && current && user
-      ? await createInviteViaApi({
-          apartmentId: current.apartment.id,
-          invitedRole: 'tenant',
-        }).then(({ invite }) => buildInviteLinkFromToken('tenant', invite.token))
-      : buildInviteLink('tenant')
+    const nextInviteLink =
+      isSupabaseConfigured && current && user
+        ? await createInviteViaApi({
+            apartmentId: current.apartment.id,
+            invitedRole: 'tenant',
+          }).then(({ invite }) => buildInviteLinkFromToken('tenant', invite.token))
+        : buildInviteLink('tenant')
+
     setIsInviteOpen(true)
     setInviteStatus('')
     setInviteLink(nextInviteLink)
@@ -95,30 +98,32 @@ export function RoommatesPage() {
     setLandlordError('')
     setLandlordInviteStatus('')
 
-    if (!landlordForm.name.trim()) {
-      setLandlordError('צריך לציין שם מלא.')
-      return
-    }
+    if (!usesInviteOnlyFlow) {
+      if (!landlordForm.name.trim()) {
+        setLandlordError('צריך לציין שם מלא.')
+        return
+      }
 
-    if (!landlordForm.phone.trim()) {
-      setLandlordError('נדרש מספר טלפון.')
-      return
-    }
+      if (!landlordForm.phone.trim()) {
+        setLandlordError('נדרש מספר טלפון.')
+        return
+      }
 
-    if (!landlordForm.email.trim()) {
-      setLandlordError('נדרשת כתובת אימייל.')
-      return
+      if (!landlordForm.email.trim()) {
+        setLandlordError('נדרשת כתובת אימייל.')
+        return
+      }
     }
 
     const nextInviteLink =
-      isSupabaseConfigured && current && user
+      usesInviteOnlyFlow && current && user
         ? await createInviteViaApi({
             apartmentId: current.apartment.id,
             invitedRole: 'landlord',
           }).then(({ invite }) => buildInviteLinkFromToken('landlord', invite.token))
         : buildInviteLink('landlord')
 
-    if (!isSupabaseConfigured) {
+    if (!usesInviteOnlyFlow) {
       await addLandlord({
         name: landlordForm.name,
         phone: landlordForm.phone,
@@ -220,7 +225,11 @@ export function RoommatesPage() {
               <div>
                 <p className="tickets-hero__eyebrow">בעל דירה</p>
                 <h2 id="add-landlord-title">הזמנת בעל דירה לדירה</h2>
-                <p>ניצור קישור הזמנה לבעל הדירה כדי שיוכל להתחבר או לפתוח חשבון.</p>
+                <p>
+                  {usesInviteOnlyFlow
+                    ? 'ניצור קישור הזמנה לבעל הדירה. הוא יבחר אם להתחבר עם חשבון קיים או לפתוח חשבון חדש, ואז ישויך אוטומטית לדירה.'
+                    : 'ניצור קישור הזמנה לבעל הדירה כדי שיוכל להתחבר או לפתוח חשבון.'}
+                </p>
               </div>
               <button type="button" className="btn-text" onClick={closeLandlordModal}>
                 סגירה
@@ -228,53 +237,62 @@ export function RoommatesPage() {
             </div>
 
             <form className="roommate-form" onSubmit={(event) => void onLandlordSubmit(event)} noValidate>
-              <label className="field">
-                <span className="field__label">שם מלא</span>
-                <input
-                  className="field__input"
-                  type="text"
-                  value={landlordForm.name}
-                  onChange={(event) =>
-                    setLandlordForm((currentForm) => ({
-                      ...currentForm,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder="שם פרטי ושם משפחה"
-                />
-              </label>
-              <label className="field">
-                <span className="field__label">מספר טלפון</span>
-                <input
-                  className="field__input"
-                  type="tel"
-                  dir="ltr"
-                  value={landlordForm.phone}
-                  onChange={(event) =>
-                    setLandlordForm((currentForm) => ({
-                      ...currentForm,
-                      phone: event.target.value,
-                    }))
-                  }
-                  placeholder="050-123-4567"
-                />
-              </label>
-              <label className="field">
-                <span className="field__label">כתובת אימייל</span>
-                <input
-                  className="field__input"
-                  type="email"
-                  dir="ltr"
-                  value={landlordForm.email}
-                  onChange={(event) =>
-                    setLandlordForm((currentForm) => ({
-                      ...currentForm,
-                      email: event.target.value,
-                    }))
-                  }
-                  placeholder="name@example.com"
-                />
-              </label>
+              {usesInviteOnlyFlow ? (
+                <p className="form-message">
+                  הקישור לא שומר מייל או טלפון. בעל הדירה יזין את הפרטים שלו בזמן ההתחברות או ההרשמה, והמערכת תשמור את הפרטים שהוא יבחר.
+                </p>
+              ) : (
+                <>
+                  <label className="field">
+                    <span className="field__label">שם מלא</span>
+                    <input
+                      className="field__input"
+                      type="text"
+                      value={landlordForm.name}
+                      onChange={(event) =>
+                        setLandlordForm((currentForm) => ({
+                          ...currentForm,
+                          name: event.target.value,
+                        }))
+                      }
+                      placeholder="שם פרטי ושם משפחה"
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">מספר טלפון</span>
+                    <input
+                      className="field__input"
+                      type="tel"
+                      dir="ltr"
+                      value={landlordForm.phone}
+                      onChange={(event) =>
+                        setLandlordForm((currentForm) => ({
+                          ...currentForm,
+                          phone: event.target.value,
+                        }))
+                      }
+                      placeholder="050-123-4567"
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">כתובת אימייל</span>
+                    <input
+                      className="field__input"
+                      type="email"
+                      dir="ltr"
+                      value={landlordForm.email}
+                      onChange={(event) =>
+                        setLandlordForm((currentForm) => ({
+                          ...currentForm,
+                          email: event.target.value,
+                        }))
+                      }
+                      placeholder="name@example.com"
+                    />
+                  </label>
+                </>
+              )}
+
               {landlordError ? (
                 <p className="form-message form-message--error">{landlordError}</p>
               ) : null}

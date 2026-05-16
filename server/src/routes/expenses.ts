@@ -79,8 +79,9 @@ expensesRouter.put('/:expenseId', updateExpenseHandler)
 
 expensesRouter.delete('/:expenseId', async (request, response, next) => {
   try {
+    const apartmentId = getApartmentIdFromParams(request)
     const expenseId = getResourceIdFromParams(request, 'expenseId')
-    await softDeleteExpense(expenseId)
+    await softDeleteExpense(apartmentId, expenseId)
     response.status(204).send()
   } catch (error) {
     next(error)
