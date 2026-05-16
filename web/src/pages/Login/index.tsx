@@ -10,7 +10,7 @@ import { isValidEmail } from '../../utils/validation'
 
 export function LoginPage() {
   const { completeInviteJoin } = useApartment()
-  const { user, login, logout, sendPasswordResetEmail, updateSessionUser } = useAuth()
+  const { user, login, logout, refreshSessionUser, sendPasswordResetEmail } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -111,7 +111,13 @@ export function LoginPage() {
         return
       }
 
-      updateSessionUser(joinResult.user)
+      const refreshedUser = await refreshSessionUser()
+      if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
+        logout()
+        setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
+        return
+      }
+
       clearPendingInvite()
       navigate(pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard)
       return

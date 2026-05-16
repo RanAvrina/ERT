@@ -86,6 +86,7 @@ export function JoinApartmentPage() {
 
     savePendingInvite({
       apartmentId: inviteApartmentId,
+      apartmentName,
       role: inviteRole,
       token: inviteToken,
     })

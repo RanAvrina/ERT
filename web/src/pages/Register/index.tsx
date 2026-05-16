@@ -10,7 +10,7 @@ import { isValidEmail, isValidPhone } from '../../utils/validation'
 
 export function RegisterPage() {
   const { completeInviteJoin } = useApartment()
-  const { user, register, logout, updateSessionUser } = useAuth()
+  const { user, register, logout, refreshSessionUser } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState({
     name: '',
@@ -119,7 +119,13 @@ export function RegisterPage() {
         return
       }
 
-      updateSessionUser(joinResult.user)
+      const refreshedUser = await refreshSessionUser()
+      if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
+        logout()
+        setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
+        return
+      }
+
       clearPendingInvite()
       navigate(pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard)
       return

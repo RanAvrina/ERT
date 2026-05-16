@@ -40,6 +40,22 @@ export function toHebrewAuthMessage(rawMessage: string) {
     return 'פג תוקף ההתחברות. נסו להתחבר מחדש.'
   }
 
+  if (
+    message.includes('already linked to an active apartment') ||
+    message.includes('already linked to another active apartment') ||
+    message.includes('already linked to this apartment with a different role') ||
+    message.includes('כבר משויך לדירה')
+  ) {
+    return rawMessage
+  }
+
+  if (
+    message.includes('apartment already has an active landlord') ||
+    message.includes('already has an active landlord')
+  ) {
+    return 'כבר משויך בעל דירה אחר לדירה הזו. צריך להסיר או לעדכן אותו לפני קבלת ההזמנה.'
+  }
+
   if (message.includes('request timed out')) {
     return 'השרת לא הגיב בזמן. נסו שוב בעוד כמה רגעים.'
   }

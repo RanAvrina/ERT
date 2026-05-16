@@ -62,6 +62,7 @@ interface AuthState {
   register: (input: RegisterInput) => Promise<AuthResult>
   createAccountIdentity: (input: RegisterInput) => Promise<AccountCreationResult>
   sendPasswordResetEmail: (email: string) => Promise<{ ok: boolean; error: string }>
+  refreshSessionUser: (emailFromSession?: string | null) => Promise<User | null>
   updateSessionUser: (user: User) => void
   logout: () => void
 }
@@ -154,14 +155,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [setUser],
   )
 
-  useEffect(() => {
-    if (!isSupabaseConfigured) return
+  const refreshSessionUser = useCallback(
+    async (emailFromSession?: string | null) => {
+      if (!isSupabaseConfigured) {
+        return null
+      }
 
-    let cancelled = false
-
-    async function syncFromSupabaseSession(emailFromSession?: string | null) {
       const syncVersion = ++authSyncVersionRef.current
-      const isLatestSync = () => !cancelled && authSyncVersionRef.current === syncVersion
+      const isLatestSync = () => authSyncVersionRef.current === syncVersion
 
       try {
         const authUser = emailFromSession
@@ -175,7 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             clearActiveApartment()
             setIsAuthReady(true)
           }
-          return
+          return null
         }
 
         const snapshot = await readBootstrapViaApi()
@@ -191,16 +192,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             clearActiveApartment()
             setIsAuthReady(true)
           }
-          return
+          return null
         }
 
         if (!snapshot.membership || !snapshot.apartmentState) {
+          const detachedUser = buildDetachedUser(account)
           if (isLatestSync()) {
             clearActiveApartment()
-            persistUser(buildDetachedUser(account))
+            persistUser(detachedUser)
             setIsAuthReady(true)
           }
-          return
+          return detachedUser
         }
 
         const apartmentState = await activateApartment(
@@ -212,32 +214,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           apartmentState?.roommates.find((member) => member.id === account.id) ??
           (apartmentState?.landlordUser?.id === account.id
             ? apartmentState.landlordUser
-            : null)
+            : null) ??
+          buildDetachedUser(account, snapshot.membership.role)
 
         if (isLatestSync()) {
-          persistUser(nextUser ?? buildDetachedUser(account, snapshot.membership.role))
+          persistUser(nextUser)
           setIsAuthReady(true)
         }
+
+        return nextUser
       } catch {
         if (isLatestSync()) {
           persistUser(null)
           clearActiveApartment()
           setIsAuthReady(true)
         }
+        return null
       }
-    }
+    },
+    [activateApartment, clearActiveApartment, persistUser],
+  )
 
-    void syncFromSupabaseSession()
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+
+    let cancelled = false
+
+    void refreshSessionUser()
 
     const unsubscribe = subscribeToAuthChanges((_event, sessionUser) => {
-      void syncFromSupabaseSession(sessionUser?.email ?? null)
+      if (cancelled) return
+      void refreshSessionUser(sessionUser?.email ?? null)
     })
 
     return () => {
       cancelled = true
       unsubscribe()
     }
-  }, [activateApartment, clearActiveApartment, persistUser])
+  }, [refreshSessionUser])
 
   const createAccountIdentity = useCallback(
     async ({ name, phone, email, password }: RegisterInput): Promise<AccountCreationResult> => {
@@ -583,6 +597,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       createAccountIdentity,
       sendPasswordResetEmail,
+      refreshSessionUser,
       updateSessionUser,
       logout,
     }),
@@ -593,6 +608,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       createAccountIdentity,
       sendPasswordResetEmail,
+      refreshSessionUser,
       updateSessionUser,
       logout,
     ],

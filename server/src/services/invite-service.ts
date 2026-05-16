@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { ApiError } from '../lib/api-error.js'
 import { supabaseAdmin } from '../lib/supabase.js'
-import { assertAccountCanReceiveInviteJoin, createMembership, findActiveMembershipByAccountId } from './membership-service.js'
-import { requireApartmentById } from './apartment-service.js'
+import { ensureMembership, findActiveMembershipByAccountId } from './membership-service.js'
+import { findApartmentById, requireApartmentById } from './apartment-service.js'
 
 interface InviteRow {
   id: number
@@ -105,14 +105,27 @@ export async function requireActiveInviteByToken(token: string) {
 
 export async function acceptInvite(token: string, accountId: number) {
   const invite = await requireActiveInviteByToken(token)
-  await assertAccountCanReceiveInviteJoin(accountId, invite.invitedRole)
-
   const existingMembership = await findActiveMembershipByAccountId(accountId)
   if (existingMembership) {
-    throw new ApiError(409, 'This account is already linked to an active apartment.')
+    if (existingMembership.apartmentId !== invite.apartmentId) {
+      const existingApartment = await findApartmentById(existingMembership.apartmentId)
+      throw new ApiError(
+        409,
+        `החשבון כבר משויך לדירה ${
+          existingApartment?.name ?? `#${existingMembership.apartmentId}`
+        }. אי אפשר לצרף אותו לדירה נוספת.`,
+      )
+    }
+
+    if (existingMembership.role !== invite.invitedRole) {
+      throw new ApiError(
+        409,
+        'החשבון כבר משויך לדירה הזו בתפקיד אחר. אי אפשר להשלים את ההזמנה עם אותו החשבון.',
+      )
+    }
   }
 
-  const membership = await createMembership({
+  const membership = await ensureMembership({
     apartmentId: invite.apartmentId,
     accountId,
     role: invite.invitedRole,
