@@ -4,6 +4,7 @@ import { AuthShell } from '../../components/auth/AuthShell'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { appRoutes } from '../../routes/paths'
+import { toHebrewAuthMessage } from '../../utils/authMessages'
 import { clearPendingInvite, readPendingInvite } from '../../utils/invite'
 import { isValidEmail, isValidPhone } from '../../utils/validation'
 
@@ -82,7 +83,7 @@ export function RegisterPage() {
     }
 
     if (!result.ok) {
-      setError(result.error)
+      setError(toHebrewAuthMessage(result.error))
       return
     }
 
@@ -102,7 +103,7 @@ export function RegisterPage() {
 
       if (!joinResult.ok || !joinResult.user) {
         logout()
-        setError(joinResult.error)
+        setError(toHebrewAuthMessage(joinResult.error))
         return
       }
 

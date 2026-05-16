@@ -4,6 +4,7 @@ import { AuthShell } from '../../components/auth/AuthShell'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { appRoutes } from '../../routes/paths'
+import { toHebrewAuthMessage } from '../../utils/authMessages'
 import { clearPendingInvite, readPendingInvite } from '../../utils/invite'
 import { isValidEmail } from '../../utils/validation'
 
@@ -51,7 +52,7 @@ export function LoginPage() {
 
     const result = await sendPasswordResetEmail(resetEmail)
     if (!result.ok && result.error) {
-      setResetError(result.error)
+      setResetError(toHebrewAuthMessage(result.error))
       return
     }
 
@@ -86,7 +87,7 @@ export function LoginPage() {
     })
 
     if (!result.ok) {
-      setError(result.error)
+      setError(toHebrewAuthMessage(result.error))
       return
     }
 
@@ -106,7 +107,7 @@ export function LoginPage() {
 
       if (!joinResult.ok || !joinResult.user) {
         logout()
-        setError(joinResult.error)
+        setError(toHebrewAuthMessage(joinResult.error))
         return
       }
 
