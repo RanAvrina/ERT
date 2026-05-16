@@ -3,6 +3,7 @@ import { supabase } from '../supabase/client'
 
 const GET_CACHE_TTL_MS = 5_000
 const TOKEN_REFRESH_BUFFER_MS = 10_000
+const REQUEST_TIMEOUT_MS = import.meta.env.DEV ? 15_000 : 45_000
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -67,6 +68,10 @@ function clearGetCache() {
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}) {
+  if (!apiBaseUrl) {
+    throw new Error('API is not configured.')
+  }
+
   const method = (options.method ?? 'GET').toUpperCase()
   const isGet = method === 'GET'
   const cacheKey = `${options.authenticated !== false ? 'auth' : 'anon'}:${path}`
@@ -100,7 +105,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   }
 
   const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), 15000)
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
 
   const executeRequest = async () => {
     let response: Response
