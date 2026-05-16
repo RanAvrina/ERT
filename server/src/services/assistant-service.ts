@@ -46,6 +46,11 @@ export interface AssistantContextSnapshot {
   reminders: string[]
 }
 
+interface AssistantHistoryMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
 interface AssistantData {
   apartmentState: ApartmentStateSnapshot
   tasks: Task[]
@@ -499,8 +504,14 @@ function buildSnapshot(data: AssistantData): AssistantContextSnapshot {
   }
 }
 
-function findMatchedRoommate(question: string, apartmentState: ApartmentStateSnapshot, excludeAccountId: number) {
+function findMatchedRoommate(
+  question: string,
+  apartmentState: ApartmentStateSnapshot,
+  excludeAccountId: number,
+  preferredQuestion?: string,
+) {
   const normalizedQuestion = normalizeText(question)
+  const normalizedPreferredQuestion = preferredQuestion ? normalizeText(preferredQuestion) : ''
   const candidates = apartmentState.users
     .filter((user) => user.id !== excludeAccountId)
     .map((user) => ({
@@ -512,10 +523,18 @@ function findMatchedRoommate(question: string, apartmentState: ApartmentStateSna
   let bestMatch: { accountId: number; name: string; score: number } | null = null
 
   for (const candidate of candidates) {
-    const score = candidate.tokens.reduce(
+    const baseScore = candidate.tokens.reduce(
       (sum, token) => (normalizedQuestion.includes(token) ? sum + token.length : sum),
       0,
     )
+    const preferredScore = normalizedPreferredQuestion
+      ? candidate.tokens.reduce(
+          (sum, token) =>
+            normalizedPreferredQuestion.includes(token) ? sum + token.length * 4 : sum,
+          0,
+        )
+      : 0
+    const score = baseScore + preferredScore
     if (score <= 0) continue
     if (!bestMatch || score > bestMatch.score) {
       bestMatch = { accountId: candidate.accountId, name: candidate.name, score }
@@ -525,8 +544,14 @@ function findMatchedRoommate(question: string, apartmentState: ApartmentStateSna
   return bestMatch
 }
 
-function parsePaymentAction(question: string, account: AuthAccount, data: AssistantData): AssistantActionProposal | null {
+function parsePaymentAction(
+  question: string,
+  currentQuestion: string,
+  account: AuthAccount,
+  data: AssistantData,
+): AssistantActionProposal | null {
   const normalized = normalizeText(question)
+  const normalizedCurrentQuestion = normalizeText(currentQuestion)
   const paymentPhrases = [
     'שילמתי',
     'שלימתי',
@@ -545,7 +570,12 @@ function parsePaymentAction(question: string, account: AuthAccount, data: Assist
   if (!amountMatch) return null
   const amount = amountMatch[1].replace(',', '.')
 
-  const roommate = findMatchedRoommate(normalized, data.apartmentState, account.id)
+  const roommate = findMatchedRoommate(
+    normalized,
+    data.apartmentState,
+    account.id,
+    normalizedCurrentQuestion,
+  )
   if (!roommate) return null
 
   const currentUserName =
@@ -553,6 +583,8 @@ function parsePaymentAction(question: string, account: AuthAccount, data: Assist
   const roommatePaidMe =
     normalized.includes('שילם לי') ||
     normalized.includes('שילמה לי') ||
+    normalizedCurrentQuestion.includes('שילם לי') ||
+    normalizedCurrentQuestion.includes('שילמה לי') ||
     normalized.includes(`${normalizeText(roommate.name)} שילם לי`) ||
     normalized.includes(`${normalizeText(roommate.name)} שילמה לי`)
 
@@ -583,9 +615,10 @@ function parseShoppingAction(question: string, account: AuthAccount, data: Assis
   const impliesCreate =
     normalized.includes('תוסיף') ||
     normalized.includes('תוסיף לי') ||
+    normalized.includes('הוסף') ||
+    normalized.includes('תכניס') ||
     normalized.includes('לרשימת קניות') ||
-    normalized.includes('לקניות') ||
-    normalized.includes('צריך לקנות')
+    normalized.includes('לקניות')
 
   if (!impliesCreate) return null
 
@@ -594,6 +627,8 @@ function parseShoppingAction(question: string, account: AuthAccount, data: Assis
     .replace(/צריך לקנות/gi, '')
     .replace(/תוסיף לי/gi, '')
     .replace(/תוסיף/gi, '')
+    .replace(/הוסף/gi, '')
+    .replace(/תכניס/gi, '')
     .replace(/לקניות/gi, '')
     .replace(/^\s*את\s+/i, '')
     .trim()
@@ -617,8 +652,37 @@ function parseShoppingAction(question: string, account: AuthAccount, data: Assis
   })
 }
 
-function detectAssistantAction(question: string, account: AuthAccount, data: AssistantData) {
-  return parsePaymentAction(question, account, data) ?? parseShoppingAction(question, account, data)
+function detectAssistantAction(
+  question: string,
+  currentQuestion: string,
+  account: AuthAccount,
+  data: AssistantData,
+) {
+  return (
+    parsePaymentAction(question, currentQuestion, account, data) ??
+    parseShoppingAction(currentQuestion, account, data)
+  )
+}
+
+function buildEffectiveQuestion(
+  question: string,
+  previousQuestion?: string | null,
+  history: AssistantHistoryMessage[] = [],
+) {
+  const normalizedQuestion = normalizeText(question)
+  const correctionPrefixes = ['לא ', 'לא,', 'תיקון', 'התכוונתי', 'בעצם', 'כלומר']
+  const isShortFollowup = normalizedQuestion.split(/\s+/).filter(Boolean).length <= 3
+  const isCorrection = correctionPrefixes.some((prefix) => normalizedQuestion.startsWith(prefix))
+  const previousUserQuestion =
+    previousQuestion?.trim() ||
+    [...history]
+      .reverse()
+      .find((message) => message.role === 'user')?.text
+
+  if (!previousUserQuestion) return question
+  if (!isCorrection && !isShortFollowup) return question
+
+  return `${previousUserQuestion}\nהבהרה: ${question}`
 }
 
 function answerOverview(data: AssistantData, account: AuthAccount) {
@@ -1044,10 +1108,14 @@ export async function answerAssistantQuestion(
   apartmentId: number,
   question: string,
   account: AuthAccount,
+  previousQuestion?: string | null,
+  history: AssistantHistoryMessage[] = [],
 ) {
   const data = await loadAssistantData(apartmentId)
   const snapshot = buildSnapshot(data)
   const normalizedQuestion = normalizeText(question)
+  const effectiveQuestion = buildEffectiveQuestion(question, previousQuestion, history)
+  const normalizedEffectiveQuestion = normalizeText(effectiveQuestion)
 
   if (!normalizedQuestion) {
     return {
@@ -1057,15 +1125,20 @@ export async function answerAssistantQuestion(
     }
   }
 
-  const proposedAction = detectAssistantAction(normalizedQuestion, account, data)
+  const proposedAction = detectAssistantAction(
+    normalizedEffectiveQuestion,
+    normalizedQuestion,
+    account,
+    data,
+  )
   const answer = proposedAction
     ? `זיהיתי בקשה לביצוע פעולה:\n• ${proposedAction.summary}\n\nאם זה נכון, תאשר ואבצע את זה עבורך.`
-    : answerSmartQuestion(data, account, normalizedQuestion)
+    : answerSmartQuestion(data, account, normalizedEffectiveQuestion)
 
   return {
     answer,
     context: snapshot,
-    suggestions: buildSuggestions(normalizedQuestion),
+    suggestions: buildSuggestions(normalizedEffectiveQuestion),
     proposedAction,
   }
 }

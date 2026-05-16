@@ -15,6 +15,7 @@ import {
   readAssistantContextViaApi,
   type AssistantActionProposal,
   type AssistantContextSnapshot,
+  type AssistantHistoryMessage,
 } from '../data/server/assistantApi'
 import { useApartment } from './ApartmentContext'
 
@@ -129,7 +130,20 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       setIsLoading(true)
 
       try {
-        const response = await queryAssistantViaApi(apartmentId, trimmedQuestion)
+        const previousUserQuestion =
+          [...messages]
+            .reverse()
+            .find((message) => message.role === 'user')?.text ?? null
+        const history: AssistantHistoryMessage[] = messages
+          .slice(-6)
+          .map((message) => ({ role: message.role, text: message.text }))
+
+        const response = await queryAssistantViaApi(
+          apartmentId,
+          trimmedQuestion,
+          previousUserQuestion,
+          history,
+        )
 
         setContextSnapshot(response.context)
         setSuggestions(response.suggestions)
@@ -152,7 +166,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         setIsLoading(false)
       }
     },
-    [apartmentId, isLoading],
+    [apartmentId, isLoading, messages],
   )
 
   const confirmAction = useCallback(async () => {

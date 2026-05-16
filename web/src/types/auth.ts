@@ -4,6 +4,8 @@ export interface AuthResult {
   ok: boolean
   error: string
   user?: User
+  requiresEmailVerification?: boolean
+  email?: string
 }
 
 export interface AccountIdentity {

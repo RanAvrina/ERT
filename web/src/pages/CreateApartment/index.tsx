@@ -28,6 +28,7 @@ export function CreateApartmentPage() {
     confirmPassword: '',
   })
   const [created, setCreated] = useState(false)
+  const [verificationEmail, setVerificationEmail] = useState('')
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -86,6 +87,11 @@ export function CreateApartmentPage() {
       role: 'admin',
     })
 
+    if (accountResult.requiresEmailVerification) {
+      setVerificationEmail(accountResult.email ?? form.email.trim().toLowerCase())
+      return
+    }
+
     if (!accountResult.ok || !accountResult.account) {
       setError(accountResult.error)
       return
@@ -124,7 +130,23 @@ export function CreateApartmentPage() {
         </p>
       }
     >
-      {created ? (
+      {verificationEmail ? (
+        <div className="form-stack">
+          <p className="form-message form-message--success">
+            שלחנו מייל אימות לכתובת {verificationEmail}.
+          </p>
+          <p className="form-message">
+            לפני שאפשר לפתוח דירה צריך לאשר את המייל, ואז לחזור ולבצע את הפעולה שוב.
+          </p>
+          <button
+            type="button"
+            className="btn btn--primary btn--block"
+            onClick={() => navigate(appRoutes.login)}
+          >
+            מעבר להתחברות
+          </button>
+        </div>
+      ) : created ? (
         <div className="form-stack">
           <p className="form-message">
             הדירה נוצרה והדייר הראשון הוגדר כמנהל.

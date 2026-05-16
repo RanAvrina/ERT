@@ -27,8 +27,22 @@ In Supabase Auth settings, set:
 - Site URL:
   - `https://your-app-domain`
 - Redirect URLs:
+  - `https://your-app-domain/login`
   - `https://your-app-domain/reset-password`
   - local URLs used for development if needed
+
+Enable email confirmation:
+
+1. `Authentication -> Providers -> Email`
+2. Turn on `Confirm email`
+3. Keep `Secure email change` enabled
+4. Save
+
+Expected behavior after this:
+
+- Register sends a real confirmation email
+- Login is blocked until the user confirms the email
+- The web app shows a Hebrew message instead of a generic auth error
 
 ## 3. Server deployment
 
@@ -92,22 +106,43 @@ Then set:
 Run these flows against the deployed environment:
 
 1. register
-2. login
-3. reset password
-4. create apartment
-5. invite roommate / landlord
-6. accept invite
-7. create / edit / delete:
+2. email confirmation
+3. login only after email confirmation
+4. switch account in the same browser
+5. reset password
+6. create apartment
+7. invite roommate / landlord
+8. accept invite with existing account
+9. accept invite with a brand new account
+10. create / edit / delete:
    - expenses
    - payments
    - tasks
    - shopping items
    - tickets
    - apartment info
-8. refresh on inner pages
-9. assistant queries
+11. refresh on inner pages
+12. assistant queries
+13. mobile bottom navigation
+14. mobile login / register / invite flows
 
-## 7. Current known architecture decision
+## 7. Soft-launch readiness
+
+Minimum bar before sending this to real users:
+
+1. Email confirmation works on the deployed Vercel domain
+2. Render API responds on:
+   - `/api/health`
+   - `/api/health/ready`
+3. Refresh works on inner routes in Vercel
+4. Two different test accounts work on:
+   - desktop
+   - mobile
+5. Invite flow works from a fresh browser session
+6. Hardened RLS migration is already applied
+7. Rotated service role key is already in production env vars
+
+## 8. Current known architecture decision
 
 Direct frontend access is still used for Supabase Auth session handling:
 

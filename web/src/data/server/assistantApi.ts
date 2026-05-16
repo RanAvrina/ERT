@@ -41,6 +41,11 @@ export interface AssistantQueryResponse {
   proposedAction?: AssistantActionProposal
 }
 
+export interface AssistantHistoryMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
 export async function readAssistantContextViaApi(apartmentId: number) {
   const response = await apiRequest<{ context: AssistantContextSnapshot }>(
     `/apartments/${apartmentId}/assistant/context`,
@@ -49,10 +54,19 @@ export async function readAssistantContextViaApi(apartmentId: number) {
   return response.context
 }
 
-export async function queryAssistantViaApi(apartmentId: number, question: string) {
+export async function queryAssistantViaApi(
+  apartmentId: number,
+  question: string,
+  previousQuestion?: string | null,
+  history?: AssistantHistoryMessage[],
+) {
   return apiRequest<AssistantQueryResponse>(`/apartments/${apartmentId}/assistant/query`, {
     method: 'POST',
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({
+      question,
+      previousQuestion: previousQuestion ?? null,
+      history: history ?? [],
+    }),
   })
 }
 

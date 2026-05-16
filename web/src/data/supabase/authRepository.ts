@@ -23,7 +23,10 @@ export async function signUpWithPassword(input: {
 
   if (error) throw new Error(error.message)
   primeApiAccessToken(data.session?.access_token ?? null, data.session?.expires_at ?? null)
-  return data.user
+  return {
+    user: data.user,
+    hasSession: Boolean(data.session?.access_token),
+  }
 }
 
 export async function signInWithPassword(input: { email: string; password: string }) {

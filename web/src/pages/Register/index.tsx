@@ -26,6 +26,7 @@ export function RegisterPage() {
     password: '',
   })
   const [createdAccountEmail, setCreatedAccountEmail] = useState('')
+  const [verificationEmail, setVerificationEmail] = useState('')
   const pendingInviteForSession = readPendingInvite()
 
   function logoutForInviteRegister() {
@@ -84,6 +85,17 @@ export function RegisterPage() {
 
     if (!result.ok) {
       setError(toHebrewAuthMessage(result.error))
+      return
+    }
+
+    if (result.requiresEmailVerification) {
+      setVerificationEmail(result.email ?? form.email.trim().toLowerCase())
+      setForm({
+        name: '',
+        phone: '',
+        email: '',
+        password: '',
+      })
       return
     }
 
@@ -209,6 +221,40 @@ export function RegisterPage() {
           <p className="form-message">
             כרגע החשבון עדיין לא משויך לדירה. כדי להצטרף לדירה צריך להיכנס דרך קישור
             הזמנה מתאים.
+          </p>
+          <button
+            type="button"
+            className="btn btn--primary btn--block"
+            onClick={() => navigate(appRoutes.login)}
+          >
+            מעבר להתחברות
+          </button>
+        </div>
+      </AuthShell>
+    )
+  }
+
+  if (verificationEmail) {
+    return (
+      <AuthShell
+        title="נשלח מייל אימות"
+        subtitle="צריך לאשר את כתובת המייל לפני שאפשר להתחבר"
+        hideIntro
+        footer={
+          <p className="auth-card__footer-text">
+            אחרי אישור המייל אפשר לעבור ל{' '}
+            <Link to={appRoutes.login} className="link">
+              התחברות
+            </Link>
+          </p>
+        }
+      >
+        <div className="form-stack">
+          <p className="form-message form-message--success">
+            שלחנו מייל אימות לכתובת {verificationEmail}.
+          </p>
+          <p className="form-message">
+            פתחו את המייל, לחצו על קישור האימות, ואז התחברו עם החשבון החדש.
           </p>
           <button
             type="button"

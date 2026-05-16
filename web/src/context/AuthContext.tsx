@@ -35,6 +35,8 @@ interface AccountCreationResult {
   ok: boolean
   error: string
   account?: AccountIdentity
+  requiresEmailVerification?: boolean
+  email?: string
 }
 
 interface LoginInput {
@@ -272,12 +274,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         if (isSupabaseConfigured) {
-          await signUpWithPassword({
+          await signOutAuth().catch(() => undefined)
+          persistUser(null)
+          clearActiveApartment()
+
+          const signUpResult = await signUpWithPassword({
             email: normalizedEmail,
             password,
             name: name.trim(),
             phone: phone.trim(),
           })
+
+          if (!signUpResult.hasSession) {
+            return {
+              ok: true,
+              error: '',
+              requiresEmailVerification: true,
+              email: normalizedEmail,
+            }
+          }
 
           nextAccount = await ensureAccountViaApi({
             fullName: name.trim(),
@@ -470,6 +485,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role,
       })
       if (!accountResult.ok || !accountResult.account) {
+        if (accountResult.requiresEmailVerification) {
+          return {
+            ok: true,
+            error: '',
+            requiresEmailVerification: true,
+            email: accountResult.email ?? normalizeEmail(email),
+          }
+        }
+
         return {
           ok: false,
           error: accountResult.error || 'לא הצלחנו ליצור את החשבון.',

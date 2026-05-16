@@ -3,10 +3,13 @@ export function toHebrewAuthMessage(rawMessage: string) {
 
   if (!message) return 'לא הצלחנו להשלים את הפעולה.'
 
+  if (message.includes('email not confirmed')) {
+    return 'כתובת המייל עדיין לא אומתה. פתחו את המייל ולחצו על קישור האימות לפני התחברות.'
+  }
+
   if (
     message.includes('invalid login credentials') ||
     message.includes('invalid email or password') ||
-    message.includes('email not confirmed') ||
     message.includes('invalid grant')
   ) {
     return 'כתובת האימייל או הסיסמה אינם נכונים.'

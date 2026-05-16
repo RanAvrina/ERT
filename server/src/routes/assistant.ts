@@ -17,6 +17,16 @@ export const assistantRouter = Router({ mergeParams: true })
 
 const assistantQuestionSchema = z.object({
   question: z.string().trim().min(1),
+  previousQuestion: z.string().trim().min(1).nullable().optional(),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        text: z.string().trim().min(1),
+      }),
+    )
+    .max(8)
+    .optional(),
 })
 
 const assistantActionSchema = z.object({
@@ -53,7 +63,13 @@ assistantRouter.post(
         return
       }
 
-      const result = await answerAssistantQuestion(apartmentId, body.question, request.auth.account)
+      const result = await answerAssistantQuestion(
+        apartmentId,
+        body.question,
+        request.auth.account,
+        body.previousQuestion ?? null,
+        body.history ?? [],
+      )
       response.json(result)
     } catch (error) {
       next(error)
