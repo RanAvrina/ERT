@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ApiError } from '../lib/api-error.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { ensureMembership, findActiveMembershipByAccountId } from './membership-service.js'
-import { findApartmentById, requireApartmentById } from './apartment-service.js'
+import { requireApartmentById } from './apartment-service.js'
 
 interface InviteRow {
   id: number
@@ -108,12 +108,9 @@ export async function acceptInvite(token: string, accountId: number) {
   const existingMembership = await findActiveMembershipByAccountId(accountId)
   if (existingMembership) {
     if (existingMembership.apartmentId !== invite.apartmentId) {
-      const existingApartment = await findApartmentById(existingMembership.apartmentId)
       throw new ApiError(
         409,
-        `החשבון כבר משויך לדירה ${
-          existingApartment?.name ?? `#${existingMembership.apartmentId}`
-        }. אי אפשר לצרף אותו לדירה נוספת.`,
+        'החשבון כבר משויך לדירה אחרת. אי אפשר לצרף אותו לדירה נוספת.',
       )
     }
 

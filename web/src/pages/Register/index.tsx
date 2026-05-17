@@ -5,12 +5,31 @@ import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { appRoutes } from '../../routes/paths'
 import { toHebrewAuthMessage } from '../../utils/authMessages'
+import { clearPendingApartment } from '../../utils/pendingApartment'
 import { clearPendingInvite, readPendingInvite } from '../../utils/invite'
 import { isValidEmail, isValidPhone } from '../../utils/validation'
+import type { User } from '../../types/models'
+
+function buildTransientInviteUser(input: {
+  id: number
+  name: string
+  email: string
+  role: User['role']
+}): User {
+  return {
+    id: input.id,
+    apartment_id: 0,
+    name: input.name,
+    email: input.email,
+    role: input.role,
+    status: 'active',
+    joined_at: new Date().toISOString().slice(0, 10),
+  }
+}
 
 export function RegisterPage() {
   const { completeInviteJoin } = useApartment()
-  const { user, register, logout, refreshSessionUser } = useAuth()
+  const { user, createAccountIdentity, logout, refreshSessionUser } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState({
     name: '',
@@ -71,29 +90,15 @@ export function RegisterPage() {
       return
     }
 
-    let result
+    clearPendingApartment()
 
-    try {
-      result = await register({
-        ...form,
-        role: pendingInvite.role,
-        attachToApartment: false,
-        signInAfterRegister: true,
-      })
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error ? submitError.message : 'לא הצלחנו ליצור את החשבון.',
-      )
-      return
-    }
+    const accountResult = await createAccountIdentity({
+      ...form,
+      role: pendingInvite.role,
+    })
 
-    if (!result.ok) {
-      setError(toHebrewAuthMessage(result.error))
-      return
-    }
-
-    if (result.requiresEmailVerification) {
-      setVerificationEmail(result.email ?? form.email.trim().toLowerCase())
+    if (accountResult.requiresEmailVerification) {
+      setVerificationEmail(accountResult.email ?? form.email.trim().toLowerCase())
       setForm({
         name: '',
         phone: '',
@@ -103,17 +108,21 @@ export function RegisterPage() {
       return
     }
 
-    if (!result.user) {
-      logout()
-      setError('לא הצלחנו להשלים את ההצטרפות. נסו להירשם שוב.')
+    if (!accountResult.ok || !accountResult.account) {
+      setError(toHebrewAuthMessage(accountResult.error))
       return
     }
 
     const joinResult = await completeInviteJoin({
       apartmentId: pendingInvite.apartmentId,
       role: pendingInvite.role,
-      user: result.user,
       token: pendingInvite.token,
+      user: buildTransientInviteUser({
+        id: accountResult.account.id,
+        name: accountResult.account.name,
+        email: accountResult.account.email,
+        role: pendingInvite.role,
+      }),
     })
 
     if (!joinResult.ok || !joinResult.user) {
@@ -139,14 +148,7 @@ export function RegisterPage() {
         title="בחירת חשבון להצטרפות"
         subtitle="צריך לאשר עם איזה חשבון ממשיכים"
         hideIntro
-        footer={
-          <p className="auth-card__footer-text">
-            יש לכם חשבון אחר?{' '}
-            <button type="button" className="link link-button" onClick={logoutForInviteRegister}>
-              התנתקו והירשמו מחדש
-            </button>
-          </p>
-        }
+        footer={null}
       >
         <div className="form-stack">
           <p className="form-message">
@@ -242,8 +244,8 @@ export function RegisterPage() {
             שלחנו מייל אימות לכתובת {verificationEmail}.
           </p>
           <p className="form-message">
-            פתחו את המייל, לחצו על קישור האימות, ואז התחברו עם החשבון החדש דרך קישור
-            ההזמנה.
+            פתחו את המייל, לחצו על קישור האימות, ואז התחברו עם החשבון החדש. ההזמנה תושלם
+            אוטומטית אחרי ההתחברות.
           </p>
           <button
             type="button"

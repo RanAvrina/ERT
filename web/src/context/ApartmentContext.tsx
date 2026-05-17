@@ -168,9 +168,11 @@ export function ApartmentProvider({ children }: { children: ReactNode }) {
           ...nextState.roommateContacts,
           [nextState.adminUser.id]: { phone: input.adminPhone.trim() },
         }
-        nextState.credentialsByEmail = {
-          [input.adminEmail.trim().toLowerCase()]: input.adminPassword,
-        }
+        nextState.credentialsByEmail = input.adminPassword
+          ? {
+              [input.adminEmail.trim().toLowerCase()]: input.adminPassword,
+            }
+          : {}
 
         return persistApartmentState(nextState)
       }
@@ -202,7 +204,7 @@ export function ApartmentProvider({ children }: { children: ReactNode }) {
         landlordUser: null,
         landlordContact: null,
         credentialsByEmail: {
-          [nextAdmin.email]: input.adminPassword,
+          [nextAdmin.email]: input.adminPassword ?? '',
         },
       }
 
@@ -418,7 +420,7 @@ export function ApartmentProvider({ children }: { children: ReactNode }) {
         return {
           ok: false,
           user: null,
-          error: `החשבון כבר משויך לדירה אחרת: ${existingMembership.apartmentName}. אי אפשר לשייך אותו לדירה נוספת.`,
+          error: 'החשבון כבר משויך לדירה אחרת. אי אפשר לצרף אותו לדירה נוספת.',
         }
       }
 

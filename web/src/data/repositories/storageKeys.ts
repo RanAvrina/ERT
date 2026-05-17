@@ -11,4 +11,5 @@ export const storageKeys = {
   tickets: 'ert_demo_tickets',
   ticketComments: 'ert_demo_ticket_comments',
   pendingInvite: 'ert_demo_pending_invite',
+  pendingApartment: 'ert_demo_pending_apartment',
 } as const

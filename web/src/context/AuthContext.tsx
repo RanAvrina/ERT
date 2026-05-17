@@ -221,8 +221,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           apartmentState?.roommates.find((member) => member.id === account.id) ??
           (apartmentState?.landlordUser?.id === account.id
             ? apartmentState.landlordUser
-            : null) ??
-          buildDetachedUser(account, snapshot.membership.role)
+            : null)
+
+        if (!nextUser) {
+          if (isLatestSync()) {
+            clearActiveApartment()
+            persistUser(null)
+            setIsAuthReady(true)
+          }
+          return null
+        }
 
         if (isLatestSync()) {
           persistUser(nextUser)
@@ -417,8 +425,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
 
             const detachedUser = buildDetachedUser(account)
-            persistUser(detachedUser)
             clearActiveApartment()
+            persistUser(null)
             return { ok: true, error: '', user: detachedUser }
           }
 
@@ -462,6 +470,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return {
             ok: false,
             error: 'החשבון קיים, אבל עדיין לא משויך לדירה. צריך להיכנס דרך קישור הזמנה.',
+          }
+        }
+
+        if (!localMatchedMembership && allowDetachedAccount) {
+          persistUser(null)
+          clearActiveApartment()
+          return {
+            ok: true,
+            error: '',
+            user: {
+              id: matchedAccount.id,
+              apartment_id: 0,
+              name: matchedAccount.name,
+              email: matchedAccount.email,
+              role: 'tenant',
+              status: 'active',
+              joined_at: new Date().toISOString().slice(0, 10),
+            },
           }
         }
 
@@ -528,13 +554,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const account = accountResult.account
 
       if (!attachToApartment) {
-        const detachedUser = buildDetachedUser(account, role ?? 'tenant')
-
-        if (signInAfterRegister) {
-          persistUser(detachedUser)
+        return {
+          ok: true,
+          error: '',
+          user: signInAfterRegister ? buildDetachedUser(account, role ?? 'tenant') : undefined,
         }
-
-        return { ok: true, error: '', user: detachedUser }
       }
 
       const createdUser =

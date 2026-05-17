@@ -7,6 +7,7 @@ import { readUsableInviteViaApi } from '../../data/server/invitesApi'
 import { isSupabaseConfigured } from '../../lib/supabase/env'
 import { appRoutes } from '../../routes/paths'
 import { savePendingInvite, type InviteRole } from '../../utils/invite'
+import { clearPendingApartment } from '../../utils/pendingApartment'
 
 export function JoinApartmentPage() {
   const location = useLocation()
@@ -84,6 +85,7 @@ export function JoinApartmentPage() {
   function rememberInvite() {
     if (!isInviteValid || !inviteToken) return
 
+    clearPendingApartment()
     savePendingInvite({
       apartmentId: inviteApartmentId,
       apartmentName,

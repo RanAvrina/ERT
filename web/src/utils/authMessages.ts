@@ -46,7 +46,11 @@ export function toHebrewAuthMessage(rawMessage: string) {
     message.includes('already linked to this apartment with a different role') ||
     message.includes('כבר משויך לדירה')
   ) {
-    return rawMessage
+    if (message.includes('בתפקיד אחר')) {
+      return 'החשבון כבר משויך לדירה הזו בתפקיד אחר. אי אפשר להשלים את ההזמנה עם אותו החשבון.'
+    }
+
+    return 'החשבון כבר משויך לדירה אחרת. אי אפשר לצרף אותו לדירה נוספת.'
   }
 
   if (

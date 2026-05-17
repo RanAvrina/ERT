@@ -6,10 +6,14 @@ import { useAuth } from '../../context/AuthContext'
 import { appRoutes } from '../../routes/paths'
 import { toHebrewAuthMessage } from '../../utils/authMessages'
 import { clearPendingInvite, readPendingInvite } from '../../utils/invite'
+import {
+  clearPendingApartment,
+  readPendingApartment,
+} from '../../utils/pendingApartment'
 import { isValidEmail } from '../../utils/validation'
 
 export function LoginPage() {
-  const { completeInviteJoin } = useApartment()
+  const { completeInviteJoin, createApartment } = useApartment()
   const { user, login, logout, refreshSessionUser, sendPasswordResetEmail } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
@@ -21,6 +25,7 @@ export function LoginPage() {
   const [resetError, setResetError] = useState('')
   const [resetSuccess, setResetSuccess] = useState('')
   const pendingInviteForSession = readPendingInvite()
+  const pendingApartmentForSession = readPendingApartment()
 
   function logoutForLogin() {
     logout()
@@ -59,6 +64,107 @@ export function LoginPage() {
     setResetSuccess('אם קיים חשבון עם כתובת המייל הזו, יישלח אליו קישור לאיפוס סיסמה.')
   }
 
+  async function completePendingInviteFlow() {
+    const pendingInvite = readPendingInvite()
+    if (!pendingInvite) return false
+
+    const result = await login({
+      email,
+      password,
+      allowDetachedAccount: true,
+    })
+
+    if (!result.ok) {
+      setError(toHebrewAuthMessage(result.error))
+      return true
+    }
+
+    if (!result.user) {
+      logout()
+      setError('לא הצלחנו להשלים את ההצטרפות. נסו להתחבר שוב.')
+      return true
+    }
+
+    const joinResult = await completeInviteJoin({
+      apartmentId: pendingInvite.apartmentId,
+      role: pendingInvite.role,
+      user: result.user,
+      token: pendingInvite.token,
+    })
+
+    if (!joinResult.ok || !joinResult.user) {
+      logout()
+      setError(toHebrewAuthMessage(joinResult.error))
+      return true
+    }
+
+    const refreshedUser = await refreshSessionUser()
+    if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
+      logout()
+      setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
+      return true
+    }
+
+    clearPendingInvite()
+    clearPendingApartment()
+    navigate(pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard)
+    return true
+  }
+
+  async function completePendingApartmentFlow() {
+    const pendingApartment = readPendingApartment()
+    if (!pendingApartment) return false
+
+    if (pendingApartment.adminEmail !== email.trim().toLowerCase()) {
+      clearPendingApartment()
+      return false
+    }
+
+    const result = await login({
+      email,
+      password,
+      allowDetachedAccount: true,
+    })
+
+    if (!result.ok) {
+      setError(toHebrewAuthMessage(result.error))
+      return true
+    }
+
+    if (!result.user) {
+      logout()
+      setError('לא הצלחנו להשלים את פתיחת הדירה. נסו להתחבר שוב.')
+      return true
+    }
+
+    try {
+      await createApartment({
+        apartmentName: pendingApartment.apartmentName,
+        adminName: pendingApartment.adminName,
+        adminPhone: pendingApartment.adminPhone,
+        adminEmail: pendingApartment.adminEmail,
+        adminUserId: result.user.id,
+      })
+
+      const refreshedUser = await refreshSessionUser()
+      if (!refreshedUser || refreshedUser.apartment_id <= 0) {
+        throw new Error('לא הצלחנו להשלים את פתיחת הדירה. נסו להתחבר מחדש.')
+      }
+
+      clearPendingApartment()
+      navigate(appRoutes.dashboard)
+    } catch (pendingApartmentError) {
+      logout()
+      setError(
+        pendingApartmentError instanceof Error && pendingApartmentError.message
+          ? pendingApartmentError.message
+          : 'לא הצלחנו ליצור את הדירה.',
+      )
+    }
+
+    return true
+  }
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
@@ -77,75 +183,30 @@ export function LoginPage() {
     setErrors(nextErrors)
     if (nextErrors.email || nextErrors.password) return
 
-    const pendingInvite = readPendingInvite()
-    const result = await login({
-      email,
-      password,
-      allowDetachedAccount: Boolean(pendingInvite),
-    })
+    if (await completePendingInviteFlow()) return
+    if (await completePendingApartmentFlow()) return
 
+    const result = await login({ email, password })
     if (!result.ok) {
       setError(toHebrewAuthMessage(result.error))
-      return
-    }
-
-    if (pendingInvite) {
-      if (!result.user) {
-        logout()
-        setError('לא הצלחנו להשלים את ההצטרפות. נסו להתחבר שוב.')
-        return
-      }
-
-      const joinResult = await completeInviteJoin({
-        apartmentId: pendingInvite.apartmentId,
-        role: pendingInvite.role,
-        user: result.user,
-        token: pendingInvite.token,
-      })
-
-      if (!joinResult.ok || !joinResult.user) {
-        logout()
-        setError(toHebrewAuthMessage(joinResult.error))
-        return
-      }
-
-      const refreshedUser = await refreshSessionUser()
-      if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
-        logout()
-        setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
-        return
-      }
-
-      clearPendingInvite()
-      navigate(pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard)
       return
     }
 
     navigate(result.user?.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard)
   }
 
-  if (user && pendingInviteForSession) {
+  if (user && (pendingInviteForSession || pendingApartmentForSession)) {
     return (
       <AuthShell
-        title="בחירת חשבון להצטרפות"
-        subtitle="צריך להתחבר עם החשבון שאמור להצטרף לדירה"
+        title="בחירת חשבון להמשך"
+        subtitle="צריך להתנתק כדי להמשיך עם החשבון המתאים"
         hideIntro
-        footer={
-          <p className="auth-card__footer-text">
-            רוצים לחזור להזמנה?{' '}
-            <Link
-              to={`/invite/${pendingInviteForSession.apartmentId}?role=${pendingInviteForSession.role}&token=${pendingInviteForSession.token ?? ''}`}
-              className="link"
-            >
-              חזרה להזמנה
-            </Link>
-          </p>
-        }
+        footer={null}
       >
         <div className="form-stack">
           <p className="form-message">
-            כרגע מחוברים כ{user.name} ({user.email}). כדי להצטרף דרך ההזמנה צריך
-            להתנתק ולהתחבר עם החשבון המתאים.
+            כרגע מחוברים כ{user.name} ({user.email}). כדי להמשיך בתהליך צריך להתנתק ולהתחבר
+            עם החשבון המתאים.
           </p>
           {error ? <p className="form-message form-message--error">{error}</p> : null}
           <button type="button" className="btn btn--primary btn--block" onClick={logoutForLogin}>

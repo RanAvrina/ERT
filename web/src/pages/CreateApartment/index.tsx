@@ -4,12 +4,17 @@ import { AuthShell } from '../../components/auth/AuthShell'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { appRoutes } from '../../routes/paths'
+import { clearPendingInvite } from '../../utils/invite'
+import {
+  clearPendingApartment,
+  savePendingApartment,
+} from '../../utils/pendingApartment'
 import { isValidEmail, isValidPhone } from '../../utils/validation'
 
 export function CreateApartmentPage() {
   const navigate = useNavigate()
   const { createApartment } = useApartment()
-  const { createAccountIdentity } = useAuth()
+  const { createAccountIdentity, logout, refreshSessionUser } = useAuth()
   const [form, setForm] = useState({
     apartmentName: '',
     adminName: '',
@@ -27,13 +32,47 @@ export function CreateApartmentPage() {
     password: '',
     confirmPassword: '',
   })
-  const [created, setCreated] = useState(false)
   const [verificationEmail, setVerificationEmail] = useState('')
+
+  async function finalizeApartmentCreation(adminUserId?: number) {
+    try {
+      await createApartment({
+        apartmentName: form.apartmentName,
+        adminName: form.adminName,
+        adminPhone: form.phone,
+        adminEmail: form.email,
+        adminUserId,
+      })
+
+      const refreshedUser = await refreshSessionUser()
+      clearPendingApartment()
+
+      if (!refreshedUser || refreshedUser.apartment_id <= 0) {
+        throw new Error('לא הצלחנו להשלים את פתיחת הדירה. נסו להתחבר מחדש.')
+      }
+
+      navigate(appRoutes.dashboard)
+    } catch (createError) {
+      logout()
+      setError(
+        createError instanceof Error && createError.message
+          ? createError.message
+          : 'לא הצלחנו ליצור את הדירה.',
+      )
+    }
+  }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
-    const nextErrors = { apartmentName: '', adminName: '', phone: '', email: '', password: '', confirmPassword: '' }
+    const nextErrors = {
+      apartmentName: '',
+      adminName: '',
+      phone: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+    }
 
     if (!form.apartmentName.trim()) {
       nextErrors.apartmentName = 'צריך לבחור שם לדירה.'
@@ -79,6 +118,14 @@ export function CreateApartmentPage() {
       return
     }
 
+    clearPendingInvite()
+    savePendingApartment({
+      apartmentName: form.apartmentName.trim(),
+      adminName: form.adminName.trim(),
+      adminPhone: form.phone.trim(),
+      adminEmail: form.email.trim().toLowerCase(),
+    })
+
     const accountResult = await createAccountIdentity({
       name: form.adminName,
       phone: form.phone,
@@ -93,27 +140,12 @@ export function CreateApartmentPage() {
     }
 
     if (!accountResult.ok || !accountResult.account) {
+      clearPendingApartment()
       setError(accountResult.error)
       return
     }
 
-    try {
-      await createApartment({
-        apartmentName: form.apartmentName,
-        adminName: form.adminName,
-        adminPhone: form.phone,
-        adminEmail: form.email,
-        adminPassword: form.password,
-        adminUserId: accountResult.account.id,
-      })
-      setCreated(true)
-    } catch (createError) {
-      setError(
-        createError instanceof Error && createError.message
-          ? createError.message
-          : 'לא הצלחנו ליצור את הדירה.',
-      )
-    }
+    await finalizeApartmentCreation(accountResult.account.id)
   }
 
   return (
@@ -136,20 +168,7 @@ export function CreateApartmentPage() {
             שלחנו מייל אימות לכתובת {verificationEmail}.
           </p>
           <p className="form-message">
-            לפני שאפשר לפתוח דירה צריך לאשר את המייל, ואז לחזור ולבצע את הפעולה שוב.
-          </p>
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={() => navigate(appRoutes.login)}
-          >
-            מעבר להתחברות
-          </button>
-        </div>
-      ) : created ? (
-        <div className="form-stack">
-          <p className="form-message">
-            הדירה נוצרה והדייר הראשון הוגדר כמנהל.
+            אחרי אישור המייל אפשר להתחבר עם אותו חשבון, והדירה תיפתח אוטומטית.
           </p>
           <button
             type="button"

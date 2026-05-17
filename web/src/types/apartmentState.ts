@@ -30,7 +30,7 @@ export interface CreateApartmentInput {
   adminName: string
   adminPhone: string
   adminEmail: string
-  adminPassword: string
+  adminPassword?: string
   adminUserId?: number
 }
 
