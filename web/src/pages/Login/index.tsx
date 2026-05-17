@@ -22,7 +22,7 @@ export function LoginPage() {
   const [resetSuccess, setResetSuccess] = useState('')
   const pendingInviteForSession = readPendingInvite()
 
-  function logoutForInviteLogin() {
+  function logoutForLogin() {
     logout()
     setEmail('')
     setPassword('')
@@ -56,9 +56,7 @@ export function LoginPage() {
       return
     }
 
-    setResetSuccess(
-      'אם קיים חשבון עם כתובת המייל הזו, יישלח אליו קישור לאיפוס סיסמה.',
-    )
+    setResetSuccess('אם קיים חשבון עם כתובת המייל הזו, יישלח אליו קישור לאיפוס סיסמה.')
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -146,15 +144,11 @@ export function LoginPage() {
       >
         <div className="form-stack">
           <p className="form-message">
-            כרגע מחוברים כ{user.name} ({user.email}). כדי להצטרף דרך ההזמנה צריך להתנתק
-            ולהתחבר עם החשבון המתאים.
+            כרגע מחוברים כ{user.name} ({user.email}). כדי להצטרף דרך ההזמנה צריך
+            להתנתק ולהתחבר עם החשבון המתאים.
           </p>
           {error ? <p className="form-message form-message--error">{error}</p> : null}
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={logoutForInviteLogin}
-          >
+          <button type="button" className="btn btn--primary btn--block" onClick={logoutForLogin}>
             התנתק והתחבר עם חשבון אחר
           </button>
         </div>
@@ -166,30 +160,16 @@ export function LoginPage() {
     return (
       <AuthShell
         title="החלפת חשבון"
-        subtitle="כרגע יש session פעיל. כדי להיכנס עם חשבון אחר צריך להתנתק קודם."
+        subtitle="כבר יש session פעיל. כדי להתחבר עם חשבון אחר צריך להתנתק קודם."
         hideIntro
-        footer={
-          <p className="auth-card__footer-text">
-            רוצים לחזור למערכת?{' '}
-            <Link
-              to={user.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard}
-              className="link"
-            >
-              חזרה למסך הראשי
-            </Link>
-          </p>
-        }
+        footer={null}
       >
         <div className="form-stack">
           <p className="form-message">
             מחוברים כעת כ{user.name} ({user.email}).
           </p>
           {error ? <p className="form-message form-message--error">{error}</p> : null}
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={logoutForInviteLogin}
-          >
+          <button type="button" className="btn btn--primary btn--block" onClick={logoutForLogin}>
             התנתק והתחבר עם חשבון אחר
           </button>
         </div>
@@ -205,13 +185,11 @@ export function LoginPage() {
       footer={
         <p className="auth-card__footer-text">
           אין לך חשבון?{' '}
-          <Link to={appRoutes.register} className="link">
-            פתיחת חשבון חדש
-          </Link>
-          <span className="auth-card__footer-divider">·</span>
           <Link to={appRoutes.createApartment} className="link">
             פתיחת דירה חדשה
           </Link>
+          <span className="auth-card__footer-divider">·</span>
+          <span>או הצטרפו דרך קישור הזמנה</span>
         </p>
       }
     >

@@ -25,7 +25,6 @@ export function RegisterPage() {
     email: '',
     password: '',
   })
-  const [createdAccountEmail, setCreatedAccountEmail] = useState('')
   const [verificationEmail, setVerificationEmail] = useState('')
   const pendingInviteForSession = readPendingInvite()
 
@@ -67,14 +66,19 @@ export function RegisterPage() {
     }
 
     const pendingInvite = readPendingInvite()
+    if (!pendingInvite) {
+      setError('פתיחת חשבון חדש זמינה רק דרך פתיחת דירה חדשה או דרך קישור הזמנה.')
+      return
+    }
+
     let result
 
     try {
       result = await register({
         ...form,
-        role: pendingInvite?.role ?? 'tenant',
+        role: pendingInvite.role,
         attachToApartment: false,
-        signInAfterRegister: Boolean(pendingInvite),
+        signInAfterRegister: true,
       })
     } catch (submitError) {
       setError(
@@ -99,45 +103,34 @@ export function RegisterPage() {
       return
     }
 
-    if (pendingInvite) {
-      if (!result.user) {
-        logout()
-        setError('לא הצלחנו להשלים את ההצטרפות. נסו להירשם שוב.')
-        return
-      }
-
-      const joinResult = await completeInviteJoin({
-        apartmentId: pendingInvite.apartmentId,
-        role: pendingInvite.role,
-        user: result.user,
-        token: pendingInvite.token,
-      })
-
-      if (!joinResult.ok || !joinResult.user) {
-        logout()
-        setError(toHebrewAuthMessage(joinResult.error))
-        return
-      }
-
-      const refreshedUser = await refreshSessionUser()
-      if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
-        logout()
-        setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
-        return
-      }
-
-      clearPendingInvite()
-      navigate(pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard)
+    if (!result.user) {
+      logout()
+      setError('לא הצלחנו להשלים את ההצטרפות. נסו להירשם שוב.')
       return
     }
 
-    setCreatedAccountEmail(form.email.trim().toLowerCase())
-    setForm({
-      name: '',
-      phone: '',
-      email: '',
-      password: '',
+    const joinResult = await completeInviteJoin({
+      apartmentId: pendingInvite.apartmentId,
+      role: pendingInvite.role,
+      user: result.user,
+      token: pendingInvite.token,
     })
+
+    if (!joinResult.ok || !joinResult.user) {
+      logout()
+      setError(toHebrewAuthMessage(joinResult.error))
+      return
+    }
+
+    const refreshedUser = await refreshSessionUser()
+    if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
+      logout()
+      setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
+      return
+    }
+
+    clearPendingInvite()
+    navigate(pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard)
   }
 
   if (user && pendingInviteForSession) {
@@ -177,16 +170,9 @@ export function RegisterPage() {
     return (
       <AuthShell
         title="החלפת חשבון"
-        subtitle="כרגע יש session פעיל. כדי לפתוח חשבון חדש צריך להתנתק קודם."
+        subtitle="כבר יש session פעיל. כדי לפתוח חשבון חדש צריך להתנתק קודם."
         hideIntro
-        footer={
-          <p className="auth-card__footer-text">
-            רוצים לחזור למערכת?{' '}
-            <Link to={appRoutes.dashboard} className="link">
-              חזרה למסך הראשי
-            </Link>
-          </p>
-        }
+        footer={null}
       >
         <div className="form-stack">
           <p className="form-message">
@@ -205,15 +191,15 @@ export function RegisterPage() {
     )
   }
 
-  if (createdAccountEmail) {
+  if (!pendingInviteForSession) {
     return (
       <AuthShell
-        title="החשבון נוצר"
-        subtitle="השלב הבא תלוי בהזמנה לדירה"
+        title="פתיחת חשבון חדש"
+        subtitle="חשבון חדש נפתח רק דרך פתיחת דירה חדשה או דרך קישור הזמנה"
         hideIntro
         footer={
           <p className="auth-card__footer-text">
-            כבר יש לכם קישור הזמנה?{' '}
+            כבר רשומים?{' '}
             <Link to={appRoutes.login} className="link">
               עברו להתחברות
             </Link>
@@ -221,20 +207,16 @@ export function RegisterPage() {
         }
       >
         <div className="form-stack">
-          <p className="form-message form-message--success">
-            החשבון עבור {createdAccountEmail} נוצר בהצלחה.
-          </p>
-          <p className="form-message">
-            כרגע החשבון עדיין לא משויך לדירה. כדי להצטרף לדירה צריך להיכנס דרך קישור
-            הזמנה מתאים.
-          </p>
           <button
             type="button"
             className="btn btn--primary btn--block"
-            onClick={() => navigate(appRoutes.login)}
+            onClick={() => navigate(appRoutes.createApartment)}
           >
-            מעבר להתחברות
+            פתיחת דירה חדשה
           </button>
+          <p className="form-message">
+            אם הוזמנתם לדירה קיימת, פתחו את קישור ההזמנה שקיבלתם והמשיכו משם.
+          </p>
         </div>
       </AuthShell>
     )
@@ -244,7 +226,7 @@ export function RegisterPage() {
     return (
       <AuthShell
         title="נשלח מייל אימות"
-        subtitle="צריך לאשר את כתובת המייל לפני שאפשר להתחבר"
+        subtitle="צריך לאשר את כתובת המייל לפני שאפשר להשלים את ההצטרפות"
         hideIntro
         footer={
           <p className="auth-card__footer-text">
@@ -260,7 +242,8 @@ export function RegisterPage() {
             שלחנו מייל אימות לכתובת {verificationEmail}.
           </p>
           <p className="form-message">
-            פתחו את המייל, לחצו על קישור האימות, ואז התחברו עם החשבון החדש.
+            פתחו את המייל, לחצו על קישור האימות, ואז התחברו עם החשבון החדש דרך קישור
+            ההזמנה.
           </p>
           <button
             type="button"
@@ -277,7 +260,7 @@ export function RegisterPage() {
   return (
     <AuthShell
       title="פותחים חשבון"
-      subtitle="כמה פרטים קצרים ואתם בפנים"
+      subtitle="החשבון החדש ישויך לדירה שאליה הוזמנתם"
       hideIntro
       footer={
         <p className="auth-card__footer-text">
