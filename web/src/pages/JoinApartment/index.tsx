@@ -6,16 +6,24 @@ import { useAuth } from '../../context/AuthContext'
 import { readUsableInviteViaApi } from '../../data/server/invitesApi'
 import { isSupabaseConfigured } from '../../lib/supabase/env'
 import { appRoutes } from '../../routes/paths'
-import { savePendingInvite, type InviteRole } from '../../utils/invite'
+import {
+  clearPendingInvite,
+  isTerminalPendingInviteError,
+  savePendingInvite,
+  type InviteRole,
+} from '../../utils/invite'
+import { toHebrewAuthMessage } from '../../utils/authMessages'
 
 export function JoinApartmentPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const { apartmentId } = useParams()
-  const { current, getApartmentById } = useApartment()
-  const { user, logout } = useAuth()
+  const { current, getApartmentById, completeInviteJoin } = useApartment()
+  const { user, logout, refreshSessionUser } = useAuth()
   const [remoteApartmentName, setRemoteApartmentName] = useState<string | null>(null)
   const [isRemoteInviteValid, setIsRemoteInviteValid] = useState<boolean | null>(null)
+  const [autoJoinError, setAutoJoinError] = useState('')
+  const [isAutoJoining, setIsAutoJoining] = useState(false)
 
   const inviteToken = useMemo(() => {
     const params = new URLSearchParams(location.search)
@@ -98,6 +106,68 @@ export function JoinApartmentPage() {
     navigate(target)
   }
 
+  useEffect(() => {
+    if (!user || !isInviteValid || !inviteToken || isAutoJoining) return
+
+    rememberInvite()
+    const activeUser = user
+    let cancelled = false
+
+    async function completeJoinFromInvitePage() {
+      setIsAutoJoining(true)
+      setAutoJoinError('')
+
+      const joinResult = await completeInviteJoin({
+        apartmentId: inviteApartmentId,
+        role: inviteRole,
+        user: activeUser,
+        token: inviteToken,
+      })
+
+      if (cancelled) return
+
+      if (!joinResult.ok || !joinResult.user) {
+        if (isTerminalPendingInviteError(joinResult.error)) {
+          clearPendingInvite()
+        }
+        setAutoJoinError(toHebrewAuthMessage(joinResult.error))
+        setIsAutoJoining(false)
+        return
+      }
+
+      const refreshedUser = await refreshSessionUser()
+      if (cancelled) return
+
+      if (!refreshedUser || refreshedUser.apartment_id !== inviteApartmentId) {
+        clearPendingInvite()
+        setAutoJoinError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
+        setIsAutoJoining(false)
+        return
+      }
+
+      clearPendingInvite()
+      navigate(inviteRole === 'landlord' ? appRoutes.tickets : appRoutes.dashboard, {
+        replace: true,
+      })
+    }
+
+    void completeJoinFromInvitePage()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    completeInviteJoin,
+    inviteApartmentId,
+    inviteRole,
+    inviteToken,
+    isAutoJoining,
+    isInviteValid,
+    navigate,
+    refreshSessionUser,
+    user,
+  ])
+
   return (
     <AuthShell
       title="הוזמנתם להצטרף"
@@ -122,23 +192,27 @@ export function JoinApartmentPage() {
         {isInviteValid ? (
           <>
             <p className="form-message">
-              הוזמנתם להצטרף ל{apartmentName}. ההצטרפות תושלם רק אחרי התחברות או יצירת
-              חשבון.
+              הוזמנתם להצטרף ל{apartmentName}. ההצטרפות תושלם אחרי התחברות או יצירת חשבון.
             </p>
 
             {user ? (
               <>
                 <p className="form-message">
-                  כרגע מחוברים כ{user.name} ({user.email}). כדי להצטרף דרך ההזמנה צריך
-                  לעבור להתחברות או לפתוח חשבון חדש עם המשתמש המתאים.
+                  מחוברים כעת כ{user.name} ({user.email}).
                 </p>
+                {isAutoJoining ? (
+                  <p className="form-message">משלימים את ההצטרפות לדירה...</p>
+                ) : null}
+                {autoJoinError ? (
+                  <p className="form-message form-message--error">{autoJoinError}</p>
+                ) : null}
                 <div className="invite-actions">
                   <button
                     type="button"
                     className="btn btn--primary btn--block"
                     onClick={() => switchAccount(appRoutes.login)}
                   >
-                    יש לי חשבון
+                    יש לי חשבון אחר
                   </button>
                   <button
                     type="button"
@@ -170,8 +244,7 @@ export function JoinApartmentPage() {
           </>
         ) : (
           <p className="form-message form-message--error">
-            קישור ההזמנה לא תקין או לא שייך לדירה זמינה. בקשו ממנהל הדירה לשלוח קישור
-            חדש.
+            קישור ההזמנה לא תקין או לא שייך לדירה זמינה. בקשו ממנהל הדירה לשלוח קישור חדש.
           </p>
         )}
       </div>

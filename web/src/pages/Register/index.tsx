@@ -1,11 +1,15 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../../components/auth/AuthShell'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { appRoutes } from '../../routes/paths'
 import { toHebrewAuthMessage } from '../../utils/authMessages'
-import { clearPendingInvite, readPendingInvite } from '../../utils/invite'
+import {
+  clearPendingInvite,
+  isTerminalPendingInviteError,
+  readPendingInvite,
+} from '../../utils/invite'
 import { isValidEmail, isValidPhone } from '../../utils/validation'
 
 export function RegisterPage() {
@@ -27,6 +31,24 @@ export function RegisterPage() {
   })
   const [verificationEmail, setVerificationEmail] = useState('')
   const pendingInviteForSession = readPendingInvite()
+
+  function buildInviteVerificationRedirect() {
+    const pendingInvite = readPendingInvite()
+    if (!pendingInvite || typeof window === 'undefined' || !window.location.origin) {
+      return undefined
+    }
+
+    const params = new URLSearchParams({
+      inviteApartmentId: String(pendingInvite.apartmentId),
+      role: pendingInvite.role,
+    })
+
+    if (pendingInvite.token) {
+      params.set('token', pendingInvite.token)
+    }
+
+    return `${window.location.origin}${appRoutes.login}?${params.toString()}`
+  }
 
   function logoutForInviteRegister() {
     logout()
@@ -79,11 +101,10 @@ export function RegisterPage() {
         role: pendingInvite.role,
         attachToApartment: false,
         signInAfterRegister: true,
+        emailRedirectTo: buildInviteVerificationRedirect(),
       })
     } catch (submitError) {
-      setError(
-        submitError instanceof Error ? submitError.message : 'לא הצלחנו ליצור את החשבון.',
-      )
+      setError(submitError instanceof Error ? submitError.message : 'לא הצלחנו ליצור את החשבון.')
       return
     }
 
@@ -117,6 +138,9 @@ export function RegisterPage() {
     })
 
     if (!joinResult.ok || !joinResult.user) {
+      if (isTerminalPendingInviteError(joinResult.error)) {
+        clearPendingInvite()
+      }
       logout()
       setError(toHebrewAuthMessage(joinResult.error))
       return
@@ -124,6 +148,7 @@ export function RegisterPage() {
 
     const refreshedUser = await refreshSessionUser()
     if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
+      clearPendingInvite()
       logout()
       setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
       return
@@ -150,8 +175,8 @@ export function RegisterPage() {
       >
         <div className="form-stack">
           <p className="form-message">
-            כרגע מחוברים כ{user.name} ({user.email}). כדי ליצור חשבון חדש דרך ההזמנה צריך
-            להתנתק מהחשבון הנוכחי.
+            כרגע מחוברים כ{user.name} ({user.email}). כדי ליצור חשבון חדש דרך ההזמנה צריך להתנתק
+            מהחשבון הנוכחי.
           </p>
           {error ? <p className="form-message form-message--error">{error}</p> : null}
           <button
@@ -163,6 +188,16 @@ export function RegisterPage() {
           </button>
         </div>
       </AuthShell>
+    )
+  }
+
+  if (user && user.apartment_id > 0) {
+    const activeUser = user
+    return (
+      <Navigate
+        to={activeUser.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard}
+        replace
+      />
     )
   }
 
@@ -192,34 +227,7 @@ export function RegisterPage() {
   }
 
   if (!pendingInviteForSession) {
-    return (
-      <AuthShell
-        title="פתיחת חשבון חדש"
-        subtitle="חשבון חדש נפתח רק דרך פתיחת דירה חדשה או דרך קישור הזמנה"
-        hideIntro
-        footer={
-          <p className="auth-card__footer-text">
-            כבר רשומים?{' '}
-            <Link to={appRoutes.login} className="link">
-              עברו להתחברות
-            </Link>
-          </p>
-        }
-      >
-        <div className="form-stack">
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={() => navigate(appRoutes.createApartment)}
-          >
-            פתיחת דירה חדשה
-          </button>
-          <p className="form-message">
-            אם הוזמנתם לדירה קיימת, פתחו את קישור ההזמנה שקיבלתם והמשיכו משם.
-          </p>
-        </div>
-      </AuthShell>
-    )
+    return <Navigate to={appRoutes.login} replace />
   }
 
   if (verificationEmail) {
@@ -230,7 +238,7 @@ export function RegisterPage() {
         hideIntro
         footer={
           <p className="auth-card__footer-text">
-            אחרי אישור המייל אפשר לעבור ל{' '}
+            אחרי אישור המייל עברו ל{' '}
             <Link to={appRoutes.login} className="link">
               התחברות
             </Link>
@@ -242,8 +250,8 @@ export function RegisterPage() {
             שלחנו מייל אימות לכתובת {verificationEmail}.
           </p>
           <p className="form-message">
-            פתחו את המייל, לחצו על קישור האימות, ואז התחברו עם החשבון החדש דרך קישור
-            ההזמנה.
+            פתחו את המייל ולחצו על קישור האימות. אחרי האישור עברו להתחברות, והמערכת תשייך
+            אתכם לדירה אוטומטית.
           </p>
           <button
             type="button"

@@ -27,6 +27,7 @@ import {
 } from '../data/server/authApi'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { appRoutes } from '../routes/paths'
+import { readPendingInvite, type InviteRole } from '../utils/invite'
 import { useApartment } from './ApartmentContext'
 import type { AccountIdentity, AuthResult } from '../types/auth'
 import type { User } from '../types/models'
@@ -53,6 +54,7 @@ interface RegisterInput {
   role?: User['role']
   attachToApartment?: boolean
   signInAfterRegister?: boolean
+  emailRedirectTo?: string
 }
 
 interface AuthState {
@@ -93,6 +95,21 @@ function buildDetachedUser(account: AccountIdentity, role: User['role'] = 'tenan
   }
 }
 
+function readInviteMetadata(user: { user_metadata?: Record<string, unknown> } | null) {
+  const apartmentId = Number(user?.user_metadata?.pending_invite_apartment_id ?? '')
+  const role = user?.user_metadata?.pending_invite_role
+  const token = user?.user_metadata?.pending_invite_token
+
+  if (!Number.isFinite(apartmentId) || apartmentId <= 0) return null
+  if (role !== 'tenant' && role !== 'landlord') return null
+
+  return {
+    apartmentId,
+    role: role as InviteRole,
+    token: typeof token === 'string' && token.trim() ? token.trim() : null,
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const {
     current,
@@ -100,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     addLandlord,
     activateApartment,
     clearActiveApartment,
+    completeInviteJoin,
   } = useApartment()
   const [accounts, setAccounts] = useAccountsStore()
   const [user, setUser] = useAuthSessionStore()
@@ -173,11 +191,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const isLatestSync = () => authSyncVersionRef.current === syncVersion
 
       try {
-        const authUser = emailFromSession
-          ? { email: emailFromSession }
-          : await getCurrentAuthUser()
-
-        const normalizedEmail = authUser?.email ? normalizeEmail(authUser.email) : ''
+        const authUser = emailFromSession ? null : await getCurrentAuthUser()
+        const normalizedEmail = emailFromSession
+          ? normalizeEmail(emailFromSession)
+          : authUser?.email
+            ? normalizeEmail(authUser.email)
+            : ''
         if (!normalizedEmail) {
           if (isLatestSync()) {
             persistUser(null)
@@ -187,12 +206,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return null
         }
 
-        const snapshot = await readBootstrapViaApi()
-        const account =
+        let snapshot = await readBootstrapViaApi()
+        let account =
           snapshot.account &&
           normalizeEmail(snapshot.account.email) === normalizedEmail
             ? snapshot.account
             : null
+
+        if (!account) {
+          if (isLatestSync()) {
+            persistUser(null)
+            clearActiveApartment()
+            setIsAuthReady(true)
+          }
+          return null
+        }
+
+        if (!snapshot.membership || !snapshot.apartmentState) {
+          const pendingInvite = readInviteMetadata(authUser)
+
+          if (pendingInvite && account) {
+            const detachedAccount = account
+            const joinResult = await completeInviteJoin({
+              apartmentId: pendingInvite.apartmentId,
+              role: pendingInvite.role,
+              user: buildDetachedUser(
+                detachedAccount,
+                pendingInvite.role === 'landlord' ? 'landlord' : 'tenant',
+              ),
+              token: pendingInvite.token,
+            })
+
+            if (joinResult.ok) {
+              snapshot = await readBootstrapViaApi()
+              account =
+                snapshot.account &&
+                normalizeEmail(snapshot.account.email) === normalizedEmail
+                  ? snapshot.account
+                  : null
+            }
+          }
+        }
 
         if (!account) {
           if (isLatestSync()) {
@@ -261,7 +315,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshSessionUser])
 
   const createAccountIdentity = useCallback(
-    async ({ name, phone, email, password }: RegisterInput): Promise<AccountCreationResult> => {
+    async ({ name, phone, email, password, emailRedirectTo }: RegisterInput): Promise<AccountCreationResult> => {
       const normalizedEmail = normalizeEmail(email)
 
       if (!name.trim()) {
@@ -304,7 +358,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             password,
             name: name.trim(),
             phone: phone.trim(),
-            emailRedirectTo: buildEmailVerificationRedirect(),
+            emailRedirectTo: emailRedirectTo ?? buildEmailVerificationRedirect(),
+            pendingInviteApartmentId: readPendingInvite()?.apartmentId,
+            pendingInviteRole: readPendingInvite()?.role,
+            pendingInviteToken: readPendingInvite()?.token ?? null,
           })
 
           if (!signUpResult.hasSession) {
@@ -405,6 +462,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
 
           if (!snapshot.membership || !snapshot.apartmentState) {
+            if (!account) {
+              return {
+                ok: false,
+                error: 'החשבון אומת, אבל לא הצלחנו לטעון את פרופיל המשתמש.',
+              }
+            }
             if (!allowDetachedAccount) {
               await signOutAuth().catch(() => undefined)
               persistUser(null)
@@ -417,7 +480,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
 
             const detachedUser = buildDetachedUser(account)
-            persistUser(detachedUser)
             clearActiveApartment()
             return { ok: true, error: '', user: detachedUser }
           }
@@ -501,6 +563,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role,
       attachToApartment = false,
       signInAfterRegister = attachToApartment,
+      emailRedirectTo,
     }: RegisterInput): Promise<AuthResult> => {
       const accountResult = await createAccountIdentity({
         name,
@@ -508,6 +571,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email,
         password,
         role,
+        emailRedirectTo,
       })
       if (!accountResult.ok || !accountResult.account) {
         if (accountResult.requiresEmailVerification) {
@@ -529,11 +593,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!attachToApartment) {
         const detachedUser = buildDetachedUser(account, role ?? 'tenant')
-
-        if (signInAfterRegister) {
-          persistUser(detachedUser)
-        }
-
         return { ok: true, error: '', user: detachedUser }
       }
 

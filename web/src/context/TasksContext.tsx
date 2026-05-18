@@ -22,6 +22,7 @@ import type { Task, TaskStatus } from '../types/models'
 interface NewTaskInput {
   apartment_id: number
   title: string
+  description: string | null
   assignee_id: number
   due_date: string
   status: TaskStatus
@@ -30,6 +31,7 @@ interface NewTaskInput {
 
 interface UpdateTaskInput {
   title: string
+  description: string | null
   assignee_id: number
   due_date: string
   status: TaskStatus
@@ -100,7 +102,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           id: nextTempTaskId.current,
           apartment_id: task.apartment_id,
           title: task.title,
-          description: null,
+          description: task.description,
           assignee_id: task.assignee_id,
           due_date: task.due_date,
           status: task.status,
@@ -113,7 +115,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         void createTaskViaApi({
           apartmentId: task.apartment_id,
           title: task.title,
-          description: null,
+          description: task.description,
           assigneeAccountId: task.assignee_id,
           dueDate: task.due_date,
           status: task.status,
@@ -144,7 +146,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         id: nextTaskId.current,
         apartment_id: task.apartment_id,
         title: task.title,
-        description: null,
+        description: task.description,
         assignee_id: task.assignee_id,
         due_date: task.due_date,
         status: task.status,
@@ -223,6 +225,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         const optimisticTask: Task = {
           ...currentTask,
           title: task.title,
+          description: task.description,
           assignee_id: task.assignee_id,
           due_date: task.due_date,
           status: task.status,
@@ -236,7 +239,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           apartmentId,
           taskId,
           title: task.title,
-          description: currentTask?.description ?? null,
+          description: task.description,
           assigneeAccountId: task.assignee_id,
           dueDate: task.due_date,
           status: task.status,
@@ -271,6 +274,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           updatedTask = {
             ...item,
             title: task.title,
+            description: task.description,
             assignee_id: task.assignee_id,
             due_date: task.due_date,
             status: task.status,

@@ -1,16 +1,39 @@
-import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../../components/auth/AuthShell'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { appRoutes } from '../../routes/paths'
 import { toHebrewAuthMessage } from '../../utils/authMessages'
-import { clearPendingInvite, readPendingInvite } from '../../utils/invite'
+import {
+  clearPendingInvite,
+  isTerminalPendingInviteError,
+  readPendingInvite,
+  savePendingInvite,
+  type InviteRole,
+} from '../../utils/invite'
 import { isValidEmail } from '../../utils/validation'
+
+function parseInviteQuery(search: string) {
+  const params = new URLSearchParams(search)
+  const apartmentId = Number(params.get('inviteApartmentId') ?? '')
+  const role = params.get('role')
+  const token = params.get('token')
+
+  if (!Number.isFinite(apartmentId) || apartmentId <= 0) return null
+  if (role !== 'tenant' && role !== 'landlord') return null
+
+  return {
+    apartmentId,
+    role: role as InviteRole,
+    token: token?.trim() ? token.trim() : null,
+  }
+}
 
 export function LoginPage() {
   const { completeInviteJoin } = useApartment()
   const { user, login, logout, refreshSessionUser, sendPasswordResetEmail } = useAuth()
+  const location = useLocation()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -20,7 +43,26 @@ export function LoginPage() {
   const [resetEmail, setResetEmail] = useState('')
   const [resetError, setResetError] = useState('')
   const [resetSuccess, setResetSuccess] = useState('')
+  const [isCompletingInvite, setIsCompletingInvite] = useState(false)
+  const inviteFromQuery = useMemo(() => parseInviteQuery(location.search), [location.search])
   const pendingInviteForSession = readPendingInvite()
+
+  useEffect(() => {
+    if (!inviteFromQuery) return
+    savePendingInvite(inviteFromQuery)
+  }, [inviteFromQuery])
+
+  useEffect(() => {
+    if (!inviteFromQuery) return
+
+    if (user) {
+      logout()
+    }
+
+    if (location.search) {
+      navigate(appRoutes.login, { replace: true })
+    }
+  }, [inviteFromQuery, location.search, logout, navigate, user])
 
   function logoutForLogin() {
     logout()
@@ -34,6 +76,67 @@ export function LoginPage() {
     setResetError('')
     setResetSuccess('')
   }
+
+  useEffect(() => {
+    if (!user || !pendingInviteForSession || isCompletingInvite || inviteFromQuery) return
+
+    const activeUser = user
+    const pendingInvite = pendingInviteForSession
+    let cancelled = false
+
+    async function completePendingInviteSession() {
+      setIsCompletingInvite(true)
+      setError('')
+
+      const joinResult = await completeInviteJoin({
+        apartmentId: pendingInvite.apartmentId,
+        role: pendingInvite.role,
+        user: activeUser,
+        token: pendingInvite.token,
+      })
+
+      if (cancelled) return
+
+      if (!joinResult.ok || !joinResult.user) {
+        if (isTerminalPendingInviteError(joinResult.error)) {
+          clearPendingInvite()
+        }
+        setError(toHebrewAuthMessage(joinResult.error))
+        setIsCompletingInvite(false)
+        return
+      }
+
+      const refreshedUser = await refreshSessionUser()
+      if (cancelled) return
+
+      if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
+        clearPendingInvite()
+        setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
+        setIsCompletingInvite(false)
+        return
+      }
+
+      clearPendingInvite()
+      navigate(
+        pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard,
+        { replace: true },
+      )
+    }
+
+    void completePendingInviteSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    completeInviteJoin,
+    isCompletingInvite,
+    navigate,
+    pendingInviteForSession,
+    refreshSessionUser,
+    user,
+    inviteFromQuery,
+  ])
 
   async function handleForgotPasswordSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -104,6 +207,9 @@ export function LoginPage() {
       })
 
       if (!joinResult.ok || !joinResult.user) {
+        if (isTerminalPendingInviteError(joinResult.error)) {
+          clearPendingInvite()
+        }
         logout()
         setError(toHebrewAuthMessage(joinResult.error))
         return
@@ -111,6 +217,7 @@ export function LoginPage() {
 
       const refreshedUser = await refreshSessionUser()
       if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
+        clearPendingInvite()
         logout()
         setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
         return
@@ -127,8 +234,8 @@ export function LoginPage() {
   if (user && pendingInviteForSession) {
     return (
       <AuthShell
-        title="בחירת חשבון להצטרפות"
-        subtitle="צריך להתחבר עם החשבון שאמור להצטרף לדירה"
+        title="משלימים הצטרפות לדירה"
+        subtitle="המערכת משלימה את השיוך לדירה מההזמנה שקיבלתם"
         hideIntro
         footer={
           <p className="auth-card__footer-text">
@@ -137,22 +244,34 @@ export function LoginPage() {
               to={`/invite/${pendingInviteForSession.apartmentId}?role=${pendingInviteForSession.role}&token=${pendingInviteForSession.token ?? ''}`}
               className="link"
             >
-              חזרה להזמנה
+              חזרה לקישור ההזמנה
             </Link>
           </p>
         }
       >
         <div className="form-stack">
           <p className="form-message">
-            כרגע מחוברים כ{user.name} ({user.email}). כדי להצטרף דרך ההזמנה צריך
-            להתנתק ולהתחבר עם החשבון המתאים.
+            מחוברים כ{user.name} ({user.email}).
           </p>
+          {isCompletingInvite ? (
+            <p className="form-message">משלימים את ההצטרפות לדירה...</p>
+          ) : null}
           {error ? <p className="form-message form-message--error">{error}</p> : null}
           <button type="button" className="btn btn--primary btn--block" onClick={logoutForLogin}>
             התנתק והתחבר עם חשבון אחר
           </button>
         </div>
       </AuthShell>
+    )
+  }
+
+  if (user && user.apartment_id > 0 && !inviteFromQuery) {
+    const activeUser = user
+    return (
+      <Navigate
+        to={activeUser.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard}
+        replace
+      />
     )
   }
 
@@ -221,6 +340,12 @@ export function LoginPage() {
           />
           {errors.password ? <span className="field__error">{errors.password}</span> : null}
         </label>
+
+        {inviteFromQuery ? (
+          <p className="form-message form-message--success">
+            האישור נקלט. התחברו כדי להשלים את ההצטרפות לדירה.
+          </p>
+        ) : null}
 
         {error ? <p className="form-message form-message--error">{error}</p> : null}
 

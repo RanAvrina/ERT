@@ -24,3 +24,14 @@ export function readPendingInvite() {
 export function clearPendingInvite() {
   clearPendingInviteRecord()
 }
+
+export function isTerminalPendingInviteError(rawMessage: string) {
+  const message = rawMessage.trim().toLowerCase()
+
+  return (
+    message.includes('invite is no longer active') ||
+    message.includes('invite has expired') ||
+    message.includes('invite was not found') ||
+    (message.includes('קישור ההזמנה') && message.includes('לא פעיל'))
+  )
+}

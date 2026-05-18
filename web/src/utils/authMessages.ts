@@ -41,12 +41,20 @@ export function toHebrewAuthMessage(rawMessage: string) {
   }
 
   if (
+    message.includes('invite is no longer active') ||
+    message.includes('invite has expired') ||
+    message.includes('invite was not found')
+  ) {
+    return 'קישור ההזמנה לא פעיל יותר. צריך לבקש קישור הזמנה חדש.'
+  }
+
+  if (
     message.includes('already linked to an active apartment') ||
     message.includes('already linked to another active apartment') ||
     message.includes('already linked to this apartment with a different role') ||
-    message.includes('כבר משויך לדירה')
+    message.includes('החשבון כבר משויך לדירה אחרת')
   ) {
-    return rawMessage
+    return 'החשבון כבר משויך לדירה אחרת. אי אפשר לצרף אותו לדירה נוספת.'
   }
 
   if (

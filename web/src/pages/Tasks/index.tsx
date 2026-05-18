@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { TaskStatusActionChip, taskLabels } from '../../components/StatusChip'
@@ -10,14 +10,37 @@ import {
   isTaskOverdue,
   useTasks,
 } from '../../context/TasksContext'
-import type { Task, TaskStatus } from '../../types/models'
+import {
+  createHomeItemViaApi,
+  listHomeItemsViaApi,
+  updateHomeItemViaApi,
+} from '../../data/server/homeItemsApi'
+import { isSupabaseConfigured } from '../../lib/supabase/env'
+import type { ApartmentHomeItem, Task, TaskStatus } from '../../types/models'
+
+type TaskType = 'cleaning' | 'maintenance' | 'shopping' | 'inspection' | 'other'
 
 interface TaskFormState {
-  title: string
+  savedTaskKey: string
+  description: string
   assigneeId: string
   dueDate: string
   status: TaskStatus
 }
+
+interface SavedTaskFormState {
+  taskType: TaskType
+  targetName: string
+  defaultNote: string
+}
+
+const taskTypeOptions: { value: TaskType; label: string }[] = [
+  { value: 'cleaning', label: 'ניקיון' },
+  { value: 'maintenance', label: 'תחזוקה' },
+  { value: 'shopping', label: 'קניות והשלמות' },
+  { value: 'inspection', label: 'בדיקה' },
+  { value: 'other', label: 'אחר' },
+]
 
 const taskStatusOptions: { value: TaskStatus; label: string }[] = [
   { value: 'open', label: 'פתוחה' },
@@ -26,9 +49,20 @@ const taskStatusOptions: { value: TaskStatus; label: string }[] = [
   { value: 'cancelled', label: 'בוטלה' },
 ]
 
-function createInitialTaskForm(defaultAssigneeId?: number): TaskFormState {
+function getTaskTypeLabel(type: TaskType | null | undefined) {
+  return taskTypeOptions.find((option) => option.value === type)?.label ?? 'מטלה'
+}
+
+function getTaskTypeByLabel(label: string | null | undefined): TaskType {
+  return taskTypeOptions.find((option) => option.label === label)?.value ?? 'other'
+}
+
+function createInitialTaskForm(savedTasks: ApartmentHomeItem[], defaultAssigneeId?: number): TaskFormState {
+  const firstTask = savedTasks[0]
+
   return {
-    title: '',
+    savedTaskKey: firstTask?.item_key ?? '',
+    description: firstTask?.default_note ?? '',
     assigneeId: defaultAssigneeId ? String(defaultAssigneeId) : '',
     dueDate: new Date().toISOString().slice(0, 10),
     status: 'open',
@@ -43,13 +77,20 @@ function formatTaskDate(date: string) {
   }).format(new Date(date))
 }
 
-function buildFormFromTask(task: Task): TaskFormState {
+function inferSavedTaskForm(task: Task, savedTasks: ApartmentHomeItem[]): SavedTaskFormState {
+  const matchedPrefix = taskTypeOptions.find((option) => task.title.startsWith(`${option.label} - `))
+  const targetName = matchedPrefix ? task.title.replace(`${matchedPrefix.label} - `, '').trim() : task.title
+  const matchedTask = savedTasks.find((item) => item.name === targetName)
+
   return {
-    title: task.title,
-    assigneeId: String(task.assignee_id ?? ''),
-    dueDate: task.due_date ?? '',
-    status: task.status,
+    taskType: matchedTask ? getTaskTypeByLabel(matchedTask.area) : matchedPrefix?.value ?? 'other',
+    targetName,
+    defaultNote: task.description ?? matchedTask?.default_note ?? '',
   }
+}
+
+function buildTaskTitle(savedTask: ApartmentHomeItem) {
+  return `${savedTask.area} - ${savedTask.name}`.trim()
 }
 
 export function TasksPage() {
@@ -60,20 +101,34 @@ export function TasksPage() {
     () => (current?.roommates ?? []).filter((roommate) => roommate.status === 'active'),
     [current],
   )
+  const canManageSavedTasks = user?.role === 'admin' || user?.role === 'landlord'
   const getUserName = (userId: number | null) =>
     roommates.find((roommate) => roommate.id === userId)?.name
+
   const { tasks, addTask, updateTask, updateTaskStatus, deleteTask } = useTasks()
+  const [savedTasks, setSavedTasks] = useState<ApartmentHomeItem[]>([])
+  const [isSavedTasksReady, setIsSavedTasksReady] = useState(false)
+  const [savedTaskNotice, setSavedTaskNotice] = useState('')
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null)
   const [taskForm, setTaskForm] = useState<TaskFormState>(() =>
-    createInitialTaskForm(roommates[0]?.id),
+    createInitialTaskForm([], roommates[0]?.id),
   )
   const [formError, setFormError] = useState('')
   const [detailsError, setDetailsError] = useState('')
   const [inlineError, setInlineError] = useState('')
   const [openStatusTaskKey, setOpenStatusTaskKey] = useState<string | null>(null)
+  const [isSavedTaskModalOpen, setIsSavedTaskModalOpen] = useState(false)
+  const [editingSavedTaskId, setEditingSavedTaskId] = useState<number | null>(null)
+  const [savedTaskForm, setSavedTaskForm] = useState<SavedTaskFormState>({
+    taskType: 'cleaning',
+    targetName: '',
+    defaultNote: '',
+  })
+  const [savedTaskError, setSavedTaskError] = useState('')
+  const [isSavingSavedTask, setIsSavingSavedTask] = useState(false)
 
   const today = getTodayDate()
   const apartmentTasks = tasks.filter((task) => task.apartment_id === apartmentId)
@@ -81,39 +136,206 @@ export function TasksPage() {
     (task) => task.assignee_id === user?.id && isTaskIncomplete(task),
   )
   const overdueTasks = apartmentTasks.filter((task) => isTaskOverdue(task, today))
+  const selectedSavedTask =
+    savedTasks.find((item) => item.item_key === taskForm.savedTaskKey) ?? null
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSavedTasks() {
+      if (!apartmentId) return
+
+      if (!isSupabaseConfigured) {
+        setSavedTasks([])
+        setIsSavedTasksReady(true)
+        return
+      }
+
+      try {
+        const items = await listHomeItemsViaApi(apartmentId)
+        if (cancelled) return
+        setSavedTasks(items)
+      } catch {
+        if (cancelled) return
+        setSavedTasks([])
+      } finally {
+        if (!cancelled) {
+          setIsSavedTasksReady(true)
+        }
+      }
+    }
+
+    void loadSavedTasks()
+
+    return () => {
+      cancelled = true
+    }
+  }, [apartmentId])
+
+  useEffect(() => {
+    if (isTaskModalOpen || editingTask) return
+    if (!savedTasks.length) return
+    setTaskForm((currentForm) => {
+      const isValidTask = savedTasks.some((item) => item.item_key === currentForm.savedTaskKey)
+      if (isValidTask) return currentForm
+      return createInitialTaskForm(savedTasks, roommates[0]?.id)
+    })
+  }, [editingTask, isTaskModalOpen, roommates, savedTasks])
 
   function updateTaskForm(field: keyof TaskFormState, value: string) {
     setTaskForm((currentForm) => ({ ...currentForm, [field]: value }))
   }
 
+  function selectSavedTask(value: string) {
+    const task = savedTasks.find((currentTask) => currentTask.item_key === value)
+    setTaskForm((currentForm) => ({
+      ...currentForm,
+      savedTaskKey: value,
+      description: task?.default_note ?? '',
+    }))
+    setSavedTaskNotice('')
+  }
+
   function openAddTaskModal() {
     setEditingTask(null)
-    setTaskForm(createInitialTaskForm(roommates[0]?.id))
+    setTaskForm(createInitialTaskForm(savedTasks, roommates[0]?.id))
     setFormError('')
+    setSavedTaskNotice('')
     setIsTaskModalOpen(true)
   }
 
   function openEditTaskModal(task: Task) {
+    const inferred = inferSavedTaskForm(task, savedTasks)
+    const matchedTask = savedTasks.find(
+      (item) =>
+        item.name === inferred.targetName && getTaskTypeByLabel(item.area) === inferred.taskType,
+    )
+
     setSelectedTask(null)
     setEditingTask(task)
-    setTaskForm(buildFormFromTask(task))
+    setTaskForm({
+      savedTaskKey: matchedTask?.item_key ?? '',
+      description: task.description ?? matchedTask?.default_note ?? '',
+      assigneeId: String(task.assignee_id ?? roommates[0]?.id ?? ''),
+      dueDate: task.due_date ?? '',
+      status: task.status,
+    })
     setFormError('')
+    setSavedTaskNotice('')
     setIsTaskModalOpen(true)
   }
 
   function closeTaskModal() {
     setIsTaskModalOpen(false)
     setEditingTask(null)
-    setTaskForm(createInitialTaskForm(roommates[0]?.id))
+    setTaskForm(createInitialTaskForm(savedTasks, roommates[0]?.id))
     setFormError('')
+    setSavedTaskNotice('')
+  }
+
+  function openSavedTaskCreate() {
+    setEditingSavedTaskId(null)
+    setSavedTaskError('')
+    setSavedTaskForm({
+      taskType: 'cleaning',
+      targetName: '',
+      defaultNote: taskForm.description,
+    })
+    setIsSavedTaskModalOpen(true)
+  }
+
+  function openSavedTaskEdit() {
+    if (!selectedSavedTask) return
+    setEditingSavedTaskId(selectedSavedTask.id)
+    setSavedTaskError('')
+    setSavedTaskForm({
+      taskType: getTaskTypeByLabel(selectedSavedTask.area),
+      targetName: selectedSavedTask.name,
+      defaultNote: taskForm.description || selectedSavedTask.default_note,
+    })
+    setIsSavedTaskModalOpen(true)
+  }
+
+  function closeSavedTaskModal() {
+    setIsSavedTaskModalOpen(false)
+    setEditingSavedTaskId(null)
+    setSavedTaskError('')
+    setSavedTaskForm({
+      taskType: 'cleaning',
+      targetName: '',
+      defaultNote: '',
+    })
+  }
+
+  async function handleSaveSavedTask() {
+    if (!canManageSavedTasks) return
+
+    if (!savedTaskForm.targetName.trim()) {
+      setSavedTaskError('צריך למלא עבור מה המטלה.')
+      return
+    }
+
+    if (!savedTaskForm.defaultNote.trim()) {
+      setSavedTaskError('צריך לכתוב הערות למטלה הקבועה.')
+      return
+    }
+
+    setSavedTaskError('')
+    setIsSavingSavedTask(true)
+
+    try {
+      let savedTask: ApartmentHomeItem | null = null
+
+      if (editingSavedTaskId != null) {
+        savedTask = await updateHomeItemViaApi({
+          apartmentId,
+          itemId: editingSavedTaskId,
+          area: getTaskTypeLabel(savedTaskForm.taskType),
+          name: savedTaskForm.targetName.trim(),
+          defaultNote: savedTaskForm.defaultNote.trim(),
+        })
+        if (savedTask) {
+          setSavedTasks((currentTasks) =>
+            currentTasks.map((item) => (item.id === savedTask!.id ? savedTask! : item)),
+          )
+        }
+      } else {
+        savedTask = await createHomeItemViaApi({
+          apartmentId,
+          area: getTaskTypeLabel(savedTaskForm.taskType),
+          name: savedTaskForm.targetName.trim(),
+          defaultNote: savedTaskForm.defaultNote.trim(),
+        })
+        if (savedTask) {
+          setSavedTasks((currentTasks) => [...currentTasks, savedTask!])
+        }
+      }
+
+      if (savedTask) {
+        setTaskForm((currentForm) => ({
+          ...currentForm,
+          savedTaskKey: savedTask!.item_key,
+          description: savedTask!.default_note,
+        }))
+        setSavedTaskNotice(
+          editingSavedTaskId != null ? 'המטלה הקבועה עודכנה.' : 'המטלה הקבועה נוספה לרשימה.',
+        )
+      }
+
+      closeSavedTaskModal()
+    } catch (error) {
+      setSavedTaskError(error instanceof Error ? error.message : 'שמירת המטלה הקבועה נכשלה.')
+    } finally {
+      setIsSavingSavedTask(false)
+    }
   }
 
   async function handleAddTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setFormError('')
 
-    if (!taskForm.title.trim()) {
-      setFormError('צריך לתת למטלה שם קצר וברור.')
+    if (!selectedSavedTask) {
+      setFormError('צריך לבחור מטלה מהרשימה או להוסיף מטלה קבועה חדשה.')
       return
     }
 
@@ -127,26 +349,25 @@ export function TasksPage() {
       return
     }
 
+    const payload = {
+      title: buildTaskTitle(selectedSavedTask),
+      description: taskForm.description.trim() || null,
+      assignee_id: Number(taskForm.assigneeId),
+      due_date: taskForm.dueDate,
+      status: editingTask ? taskForm.status : 'open',
+    }
+
     try {
       if (editingTask) {
-        const updatedTask = await updateTask(editingTask.id, {
-          title: taskForm.title.trim(),
-          assignee_id: Number(taskForm.assigneeId),
-          due_date: taskForm.dueDate,
-          status: taskForm.status,
-        })
+        const updatedTask = await updateTask(editingTask.id, payload)
         if (updatedTask) setSelectedTask(updatedTask)
       } else {
         await addTask({
           apartment_id: apartmentId,
-          title: taskForm.title.trim(),
-          assignee_id: Number(taskForm.assigneeId),
-          due_date: taskForm.dueDate,
-          status: taskForm.status,
           created_by: user?.id ?? 0,
+          ...payload,
         })
       }
-
       closeTaskModal()
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'שמירת המטלה נכשלה.')
@@ -288,6 +509,9 @@ export function TasksPage() {
                     <span>אחראי: {getUserName(task.assignee_id) ?? 'לא הוגדר'}</span>
                     <span>יעד: {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}</span>
                   </div>
+                  {task.description ? (
+                    <p className="task-detail-note__preview">{task.description}</p>
+                  ) : null}
                 </div>
               </button>
               <div className="task-item-card__status">
@@ -300,11 +524,16 @@ export function TasksPage() {
 
       {isTaskModalOpen ? (
         <div className="modal-backdrop" role="presentation">
-          <section className="task-modal card" role="dialog" aria-modal="true" aria-labelledby="add-task-title">
+          <section
+            className="task-modal card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-modal-title"
+          >
             <div className="task-modal__head">
               <div>
                 <p className="tasks-hero__eyebrow">{editingTask ? 'עריכת מטלה' : 'מטלה חדשה'}</p>
-                <h2 id="add-task-title">{editingTask ? 'עדכון מטלה' : 'מה צריך לעשות?'}</h2>
+                <h2 id="task-modal-title">{editingTask ? 'עדכון מטלה' : 'פתיחת מטלה'}</h2>
               </div>
               <button type="button" className="btn-text" onClick={closeTaskModal}>
                 סגירה
@@ -312,15 +541,68 @@ export function TasksPage() {
             </div>
 
             <form className="task-form" onSubmit={handleAddTask} noValidate>
+              <div className="field">
+                <span className="field__label">רשימת מטלות</span>
+                <div className="task-form__saved-task-row">
+                  <select
+                    className="field__input"
+                    value={taskForm.savedTaskKey}
+                    onChange={(event) => selectSavedTask(event.target.value)}
+                    disabled={!isSavedTasksReady}
+                  >
+                    <option value="">
+                      {savedTasks.length ? 'בחרו מטלה מהרשימה' : 'אין עדיין מטלות קבועות'}
+                    </option>
+                    {savedTasks.map((item) => (
+                      <option key={item.item_key} value={item.item_key}>
+                        {buildTaskTitle(item)}
+                      </option>
+                    ))}
+                  </select>
+
+                  {canManageSavedTasks ? (
+                    <button
+                      type="button"
+                      className="btn btn--secondary btn--small"
+                      onClick={openSavedTaskCreate}
+                    >
+                      הוסף מטלה
+                    </button>
+                  ) : null}
+
+                  {canManageSavedTasks && selectedSavedTask ? (
+                    <button
+                      type="button"
+                      className="btn btn--secondary btn--small"
+                      onClick={openSavedTaskEdit}
+                    >
+                      עריכת מטלה
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
               <label className="field">
-                <span className="field__label">שם המטלה</span>
-                <input className="field__input" value={taskForm.title} onChange={(event) => updateTaskForm('title', event.target.value)} />
+                <span className="field__label">הערות</span>
+                <textarea
+                  className="field__input task-form__textarea"
+                  value={taskForm.description}
+                  onChange={(event) => updateTaskForm('description', event.target.value)}
+                />
               </label>
+
+              {savedTaskNotice ? (
+                <p className="task-form__default-note-message">{savedTaskNotice}</p>
+              ) : null}
 
               <div className="task-form__grid">
                 <label className="field">
                   <span className="field__label">אחראי</span>
-                  <select className="field__input" value={taskForm.assigneeId} onChange={(event) => updateTaskForm('assigneeId', event.target.value)}>
+                  <select
+                    className="field__input"
+                    value={taskForm.assigneeId}
+                    onChange={(event) => updateTaskForm('assigneeId', event.target.value)}
+                  >
                     {roommates.map((roommate) => (
                       <option key={roommate.id} value={roommate.id}>
                         {roommate.name}
@@ -331,20 +613,15 @@ export function TasksPage() {
 
                 <label className="field">
                   <span className="field__label">תאריך יעד</span>
-                  <input className="field__input" type="date" dir="ltr" value={taskForm.dueDate} onChange={(event) => updateTaskForm('dueDate', event.target.value)} />
+                  <input
+                    className="field__input"
+                    type="date"
+                    dir="ltr"
+                    value={taskForm.dueDate}
+                    onChange={(event) => updateTaskForm('dueDate', event.target.value)}
+                  />
                 </label>
               </div>
-
-              <label className="field">
-                <span className="field__label">סטטוס</span>
-                <select className="field__input" value={taskForm.status} onChange={(event) => updateTaskForm('status', event.target.value as TaskStatus)}>
-                  {taskStatusOptions.map((status) => (
-                    <option key={status.value} value={status.value}>
-                      {status.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
 
               {formError ? <p className="form-message form-message--error">{formError}</p> : null}
 
@@ -361,9 +638,111 @@ export function TasksPage() {
         </div>
       ) : null}
 
+      {isSavedTaskModalOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="task-modal card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="saved-task-modal-title"
+          >
+            <div className="task-modal__head">
+              <div>
+                <p className="tasks-hero__eyebrow">
+                  {editingSavedTaskId != null ? 'עריכת מטלה קבועה' : 'הוספת מטלה קבועה'}
+                </p>
+                <h2 id="saved-task-modal-title">
+                  {editingSavedTaskId != null ? 'עריכת מטלה' : 'מטלה חדשה לרשימה'}
+                </h2>
+              </div>
+              <button type="button" className="btn-text" onClick={closeSavedTaskModal}>
+                סגירה
+              </button>
+            </div>
+
+            <div className="task-form">
+              <label className="field">
+                <span className="field__label">סוג מטלה</span>
+                <select
+                  className="field__input"
+                  value={savedTaskForm.taskType}
+                  onChange={(event) =>
+                    setSavedTaskForm((currentForm) => ({
+                      ...currentForm,
+                      taskType: event.target.value as TaskType,
+                    }))
+                  }
+                >
+                  {taskTypeOptions.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span className="field__label">עבור מה המטלה</span>
+                <input
+                  className="field__input"
+                  value={savedTaskForm.targetName}
+                  onChange={(event) =>
+                    setSavedTaskForm((currentForm) => ({
+                      ...currentForm,
+                      targetName: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              <label className="field">
+                <span className="field__label">הוספת הערות</span>
+                <textarea
+                  className="field__input task-form__textarea"
+                  value={savedTaskForm.defaultNote}
+                  onChange={(event) =>
+                    setSavedTaskForm((currentForm) => ({
+                      ...currentForm,
+                      defaultNote: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              {savedTaskError ? (
+                <p className="form-message form-message--error">{savedTaskError}</p>
+              ) : null}
+
+              <div className="task-form__actions">
+                <button type="button" className="btn btn--secondary" onClick={closeSavedTaskModal}>
+                  ביטול
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void handleSaveSavedTask()}
+                  disabled={isSavingSavedTask}
+                >
+                  {isSavingSavedTask
+                    ? 'שומר...'
+                    : editingSavedTaskId != null
+                      ? 'שמור שינויים'
+                      : 'הוסף לרשימה'}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {selectedTask ? (
         <div className="modal-backdrop" role="presentation">
-          <section className="task-modal card" role="dialog" aria-modal="true" aria-labelledby="task-details-title">
+          <section
+            className="task-modal card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-details-title"
+          >
             <div className="task-modal__head">
               <div>
                 <p className="tasks-hero__eyebrow">פרטי מטלה</p>
@@ -387,13 +766,28 @@ export function TasksPage() {
                 </div>
               </div>
 
+              {selectedTask.description ? (
+                <div className="task-detail-note">
+                  <span>הערות</span>
+                  <p>{selectedTask.description}</p>
+                </div>
+              ) : null}
+
               {detailsError ? <p className="form-message form-message--error">{detailsError}</p> : null}
 
               <div className="expense-form__actions">
-                <button type="button" className="btn btn--secondary" onClick={() => openEditTaskModal(selectedTask)}>
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={() => openEditTaskModal(selectedTask)}
+                >
                   עריכה
                 </button>
-                <button type="button" className="btn btn--danger" onClick={() => setTaskToDelete(selectedTask.id)}>
+                <button
+                  type="button"
+                  className="btn btn--danger"
+                  onClick={() => setTaskToDelete(selectedTask.id)}
+                >
                   מחיקה
                 </button>
               </div>
