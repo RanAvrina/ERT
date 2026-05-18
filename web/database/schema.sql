@@ -33,9 +33,12 @@ create table if not exists apartment_memberships (
   joined_at timestamptz not null default now(),
   ended_at timestamptz,
   constraint apartment_memberships_role_check check (role in ('admin', 'tenant', 'landlord')),
-  constraint apartment_memberships_status_check check (status in ('active', 'inactive')),
-  constraint apartment_memberships_unique_active_account unique (account_id, status)
+  constraint apartment_memberships_status_check check (status in ('active', 'inactive'))
 );
+
+create unique index if not exists apartment_memberships_one_active_account
+  on apartment_memberships(account_id)
+  where status = 'active';
 
 create unique index if not exists apartment_memberships_one_active_admin_per_apartment
   on apartment_memberships(apartment_id)
@@ -121,6 +124,18 @@ create table if not exists tasks (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint tasks_status_check check (status in ('open', 'in_progress', 'done', 'cancelled'))
+);
+
+create table if not exists apartment_home_items (
+  id bigserial primary key,
+  apartment_id bigint not null references apartments(id) on delete cascade,
+  item_key varchar(80) not null,
+  area varchar(120) not null,
+  name varchar(160) not null,
+  default_note text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint apartment_home_items_unique unique (apartment_id, item_key)
 );
 
 create table if not exists shopping_lists (
@@ -219,6 +234,7 @@ alter table expense_participants enable row level security;
 alter table expense_attachments enable row level security;
 alter table payments enable row level security;
 alter table tasks enable row level security;
+alter table apartment_home_items enable row level security;
 alter table shopping_lists enable row level security;
 alter table shopping_items enable row level security;
 alter table maintenance_tickets enable row level security;
@@ -240,6 +256,7 @@ drop policy if exists expense_participants_dev_all_authenticated on expense_part
 drop policy if exists expense_attachments_dev_all_authenticated on expense_attachments;
 drop policy if exists payments_dev_all_authenticated on payments;
 drop policy if exists tasks_dev_all_authenticated on tasks;
+drop policy if exists apartment_home_items_dev_all_authenticated on apartment_home_items;
 drop policy if exists shopping_lists_dev_all_authenticated on shopping_lists;
 drop policy if exists shopping_items_dev_all_authenticated on shopping_items;
 drop policy if exists maintenance_tickets_dev_all_authenticated on maintenance_tickets;

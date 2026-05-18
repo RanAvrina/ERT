@@ -32,9 +32,12 @@ create table if not exists apartment_memberships (
   joined_at timestamptz not null default now(),
   ended_at timestamptz,
   constraint apartment_memberships_role_check check (role in ('admin', 'tenant', 'landlord')),
-  constraint apartment_memberships_status_check check (status in ('active', 'inactive')),
-  constraint apartment_memberships_unique_active_account unique (account_id, status)
+  constraint apartment_memberships_status_check check (status in ('active', 'inactive'))
 );
+
+create unique index if not exists apartment_memberships_one_active_account
+  on apartment_memberships(account_id)
+  where status = 'active';
 
 create unique index if not exists apartment_memberships_one_active_admin_per_apartment
   on apartment_memberships(apartment_id)

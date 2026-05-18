@@ -139,6 +139,17 @@ export interface MaintenanceTicketRow {
   updated_at: string
 }
 
+export interface ApartmentHomeItemRow {
+  id: number
+  apartment_id: number
+  item_key: string
+  area: string
+  name: string
+  default_note: string
+  created_at: string
+  updated_at: string
+}
+
 export interface TicketCommentRow {
   id: number
   ticket_id: number

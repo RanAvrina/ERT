@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
+import { InlineStatusMenu } from '../../components/InlineStatusMenu'
 import { ShoppingItemStatusActionChip, shoppingItemLabels } from '../../components/StatusChip'
 import { useApartment } from '../../context/ApartmentContext'
 import { useShopping } from '../../context/ShoppingContext'
@@ -172,27 +173,32 @@ export function ShoppingPage() {
     const isOpen = openStatusItemId === item.id
 
     return (
-      <div className="inline-status-menu" onClick={(event) => event.stopPropagation()}>
-        <ShoppingItemStatusActionChip
-          status={item.status}
-          onClick={() => setOpenStatusItemId((currentId) => (currentId === item.id ? null : item.id))}
-        />
-        {isOpen ? (
-          <div className="inline-status-menu__panel">
-            {shoppingStatusOptions.map((status) => (
-              <button
-                key={status.value}
-                type="button"
-                className={`inline-status-menu__option${
-                  status.value === item.status ? ' inline-status-menu__option--active' : ''
-                }`}
-                onClick={() => void handleInlineStatusChange(item, status.value)}
-              >
-                {status.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
+      <div onClick={(event) => event.stopPropagation()}>
+        <InlineStatusMenu
+          isOpen={isOpen}
+          onOpenChange={(nextValue) => setOpenStatusItemId(nextValue ? item.id : null)}
+          trigger={
+            <ShoppingItemStatusActionChip
+              status={item.status}
+              onClick={() =>
+                setOpenStatusItemId((currentId) => (currentId === item.id ? null : item.id))
+              }
+            />
+          }
+        >
+          {shoppingStatusOptions.map((status) => (
+            <button
+              key={status.value}
+              type="button"
+              className={`inline-status-menu__option${
+                status.value === item.status ? ' inline-status-menu__option--active' : ''
+              }`}
+              onClick={() => void handleInlineStatusChange(item, status.value)}
+            >
+              {status.label}
+            </button>
+          ))}
+        </InlineStatusMenu>
       </div>
     )
   }

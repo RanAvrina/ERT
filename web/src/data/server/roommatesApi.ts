@@ -22,8 +22,8 @@ export async function createRoommateMembershipViaApi(input: {
   })
 }
 
-export async function removeRoommateViaApi(apartmentId: number, membershipId: number) {
-  return apiRequest<null>(`/apartments/${apartmentId}/roommates/${membershipId}`, {
+export async function removeRoommateViaApi(apartmentId: number, accountId: number) {
+  return apiRequest<null>(`/apartments/${apartmentId}/roommates/${accountId}`, {
     method: 'DELETE',
   })
 }

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
+import { InlineStatusMenu } from '../../components/InlineStatusMenu'
 import { TicketStatusActionChip, TicketStatusChip, ticketLabels } from '../../components/StatusChip'
 import { useAuth } from '../../context/AuthContext'
 import { useApartment } from '../../context/ApartmentContext'
@@ -190,28 +191,29 @@ export function TicketDetailPage() {
         action={
           canManageStatus ? (
             <div className="roommate-actions">
-              <div className="inline-status-menu">
-                <TicketStatusActionChip
-                  status={currentTicket.status}
-                  onClick={() => setIsStatusMenuOpen((currentValue) => !currentValue)}
-                />
-                {isStatusMenuOpen ? (
-                  <div className="inline-status-menu__panel">
-                    {ticketStatusOptions.map((status) => (
-                      <button
-                        key={status}
-                        type="button"
-                        className={`inline-status-menu__option${
-                          status === currentTicket.status ? ' inline-status-menu__option--active' : ''
-                        }`}
-                        onClick={() => void handleStatusChange(status)}
-                      >
-                        {ticketLabels[status]}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+              <InlineStatusMenu
+                isOpen={isStatusMenuOpen}
+                onOpenChange={setIsStatusMenuOpen}
+                trigger={
+                  <TicketStatusActionChip
+                    status={currentTicket.status}
+                    onClick={() => setIsStatusMenuOpen((currentValue) => !currentValue)}
+                  />
+                }
+              >
+                {ticketStatusOptions.map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    className={`inline-status-menu__option${
+                      status === currentTicket.status ? ' inline-status-menu__option--active' : ''
+                    }`}
+                    onClick={() => void handleStatusChange(status)}
+                  >
+                    {ticketLabels[status]}
+                  </button>
+                ))}
+              </InlineStatusMenu>
             </div>
           ) : (
             <div className="roommate-actions">

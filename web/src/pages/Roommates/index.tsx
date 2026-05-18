@@ -5,6 +5,35 @@ import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { createInviteViaApi } from '../../data/server/invitesApi'
 import { isSupabaseConfigured } from '../../lib/supabase/env'
+import { toHebrewAuthMessage } from '../../utils/authMessages'
+
+function toHebrewRoommateRemovalMessage(rawMessage: string) {
+  const message = rawMessage.trim().toLowerCase()
+
+  if (!message) {
+    return 'לא הצלחנו להסיר את הדייר מהדירה.'
+  }
+
+  if (
+    message.includes('account membership was not found in this apartment') ||
+    message.includes('not found')
+  ) {
+    return 'לא מצאנו את הדייר ברשימת הדיירים הפעילים של הדירה.'
+  }
+
+  if (
+    message.includes('apartment_memberships_unique_active_account') ||
+    (message.includes('duplicate key value') && message.includes('apartment_memberships'))
+  ) {
+    return 'לא הצלחנו להסיר את הדייר בגלל התנגשות ישנה בנתוני החברות. צריך לעדכן את ה-DB ואז לנסות שוב.'
+  }
+
+  if (message.includes('forbidden') || message.includes('permission')) {
+    return 'אין הרשאה להסיר את הדייר הזה.'
+  }
+
+  return toHebrewAuthMessage(rawMessage)
+}
 
 export function RoommatesPage() {
   const { user } = useAuth()
@@ -22,7 +51,13 @@ export function RoommatesPage() {
   const [inviteLink, setInviteLink] = useState('')
   const [inviteStatus, setInviteStatus] = useState('')
   const [roommateToRemove, setRoommateToRemove] = useState<number | null>(null)
+  const [removeRoommateError, setRemoveRoommateError] = useState('')
+  const [isRemovingRoommate, setIsRemovingRoommate] = useState(false)
   const roommates = (current?.roommates ?? []).filter((roommate) => roommate.status === 'active')
+  const roommatePendingRemoval =
+    roommateToRemove == null
+      ? null
+      : roommates.find((roommate) => roommate.id === roommateToRemove) ?? null
   const isAdmin = user?.role === 'admin'
   const usesInviteOnlyFlow = isSupabaseConfigured
 
@@ -136,9 +171,23 @@ export function RoommatesPage() {
   }
 
   async function confirmRemoveRoommate() {
-    if (roommateToRemove == null) return
-    await removeRoommate(roommateToRemove)
-    setRoommateToRemove(null)
+    if (roommateToRemove == null || isRemovingRoommate) return
+
+    setIsRemovingRoommate(true)
+    setRemoveRoommateError('')
+
+    try {
+      await removeRoommate(roommateToRemove)
+      setRoommateToRemove(null)
+    } catch (error) {
+      setRemoveRoommateError(
+        toHebrewRoommateRemovalMessage(
+          error instanceof Error ? error.message : 'לא הצלחנו להסיר את הדייר מהדירה.',
+        ),
+      )
+    } finally {
+      setIsRemovingRoommate(false)
+    }
   }
 
   return (
@@ -168,6 +217,9 @@ export function RoommatesPage() {
           ) : null
         }
       >
+        {removeRoommateError ? (
+          <p className="form-message form-message--error">{removeRoommateError}</p>
+        ) : null}
         <ul className="roommate-list">
           {roommates.map((roommate) => (
             <li key={roommate.id} className="roommate-list__item">
@@ -183,7 +235,10 @@ export function RoommatesPage() {
                   <button
                     type="button"
                     className="btn-text btn-text--danger"
-                    onClick={() => setRoommateToRemove(roommate.id)}
+                    onClick={() => {
+                      setRemoveRoommateError('')
+                      setRoommateToRemove(roommate.id)
+                    }}
                   >
                     הסרה
                   </button>
@@ -239,7 +294,8 @@ export function RoommatesPage() {
             <form className="roommate-form" onSubmit={(event) => void onLandlordSubmit(event)} noValidate>
               {usesInviteOnlyFlow ? (
                 <p className="form-message">
-                  הקישור לא שומר מייל או טלפון. בעל הדירה יזין את הפרטים שלו בזמן ההתחברות או ההרשמה, והמערכת תשמור את הפרטים שהוא יבחר.
+                  הקישור לא שומר מייל או טלפון. בעל הדירה יזין את הפרטים שלו בזמן
+                  ההתחברות או ההרשמה, והמערכת תשמור את הפרטים שהוא יבחר.
                 </p>
               ) : (
                 <>
@@ -378,11 +434,18 @@ export function RoommatesPage() {
       {roommateToRemove != null ? (
         <ConfirmDialog
           title="להסיר את הדייר מהדירה?"
-          message="הדייר יוסר מרשימת הדיירים הפעילים ויצטרך להצטרף מחדש דרך קישור הזמנה אם יהיה צורך."
-          confirmLabel="הסרה"
+          message={
+            roommatePendingRemoval
+              ? `הדייר ${roommatePendingRemoval.name} יוסר מרשימת הדיירים הפעילים ויצטרך לקבל קישור הזמנה חדש אם ירצה לחזור.`
+              : 'הדייר יוסר מרשימת הדיירים הפעילים ויצטרך לקבל קישור הזמנה חדש אם ירצה לחזור.'
+          }
+          confirmLabel={isRemovingRoommate ? 'מסיר...' : 'הסרה'}
           cancelLabel="ביטול"
           onConfirm={() => void confirmRemoveRoommate()}
-          onCancel={() => setRoommateToRemove(null)}
+          onCancel={() => {
+            if (isRemovingRoommate) return
+            setRoommateToRemove(null)
+          }}
         />
       ) : null}
     </div>

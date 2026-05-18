@@ -9,6 +9,9 @@ export async function signUpWithPassword(input: {
   name: string
   phone: string
   emailRedirectTo?: string
+  pendingInviteApartmentId?: number
+  pendingInviteRole?: 'tenant' | 'landlord'
+  pendingInviteToken?: string | null
 }) {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
   const { data, error } = await client.auth.signUp({
@@ -19,6 +22,9 @@ export async function signUpWithPassword(input: {
       data: {
         full_name: input.name.trim(),
         phone: input.phone.trim(),
+        pending_invite_apartment_id: input.pendingInviteApartmentId ?? null,
+        pending_invite_role: input.pendingInviteRole ?? null,
+        pending_invite_token: input.pendingInviteToken ?? null,
       },
     },
   })

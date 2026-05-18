@@ -66,6 +66,17 @@ export interface Task {
   created_by: number
 }
 
+export interface ApartmentHomeItem {
+  id: number
+  apartment_id: number
+  item_key: string
+  area: string
+  name: string
+  default_note: string
+  created_at: string
+  updated_at: string
+}
+
 export type ShoppingListStatus = 'active' | 'completed' | 'cancelled'
 
 export interface ShoppingList {

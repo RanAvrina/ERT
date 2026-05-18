@@ -104,9 +104,26 @@ export async function requireActiveInviteByToken(token: string) {
 }
 
 export async function acceptInvite(token: string, accountId: number) {
-  const invite = await requireActiveInviteByToken(token)
+  const invite = await findInviteByToken(token)
+  if (!invite) {
+    throw new ApiError(404, 'Invite was not found.')
+  }
+
   const existingMembership = await findActiveMembershipByAccountId(accountId)
   if (existingMembership) {
+    const alreadyAcceptedForSameAccount =
+      invite.status === 'accepted' &&
+      invite.acceptedByAccountId === accountId &&
+      existingMembership.apartmentId === invite.apartmentId &&
+      existingMembership.role === invite.invitedRole
+
+    if (alreadyAcceptedForSameAccount) {
+      return {
+        invite,
+        membership: existingMembership,
+      }
+    }
+
     if (existingMembership.apartmentId !== invite.apartmentId) {
       throw new ApiError(
         409,
@@ -120,6 +137,14 @@ export async function acceptInvite(token: string, accountId: number) {
         'החשבון כבר משויך לדירה הזו בתפקיד אחר. אי אפשר להשלים את ההזמנה עם אותו החשבון.',
       )
     }
+  }
+
+  if (invite.status !== 'active') {
+    throw new ApiError(409, 'Invite is no longer active.')
+  }
+
+  if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+    throw new ApiError(410, 'Invite has expired.')
   }
 
   const membership = await ensureMembership({
