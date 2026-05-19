@@ -107,6 +107,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           due_date: task.due_date,
           status: task.status,
           created_by: task.created_by,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         }
         nextTempTaskId.current -= 1
 
@@ -151,6 +153,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         due_date: task.due_date,
         status: task.status,
         created_by: task.created_by,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }
       nextTaskId.current += 1
       setTasks((currentTasks) => [nextTask, ...currentTasks])
@@ -166,6 +170,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
       if (isSupabaseConfigured) {
         const optimisticTask: Task = { ...currentTask, status }
+        optimisticTask.updated_at = new Date().toISOString()
         setTasks((currentTasks) =>
           currentTasks.map((task) => (task.id === taskId ? optimisticTask : task)),
         )
@@ -229,6 +234,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           assignee_id: task.assignee_id,
           due_date: task.due_date,
           status: task.status,
+          updated_at: new Date().toISOString(),
         }
 
         setTasks((currentTasks) =>
@@ -278,6 +284,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
             assignee_id: task.assignee_id,
             due_date: task.due_date,
             status: task.status,
+            updated_at: new Date().toISOString(),
           }
           return updatedTask
         }),

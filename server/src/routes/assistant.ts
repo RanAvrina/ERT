@@ -5,9 +5,10 @@ import { authenticate } from '../middleware/authenticate.js'
 import { requireApartmentMembership } from '../middleware/require-apartment-membership.js'
 import { requireAuth } from '../middleware/require-auth.js'
 import {
-  answerAssistantQuestion,
-  getAssistantContextSnapshot,
-} from '../services/assistant-service.js'
+  answerAssistantQuestionOpenAi,
+  getAssistantContextSnapshotOpenAi,
+  getAssistantOpenAiHealth,
+} from '../services/assistant-openai-service.js'
 import {
   cancelAssistantAction,
   executeAssistantAction,
@@ -34,6 +35,20 @@ const assistantActionSchema = z.object({
 })
 
 assistantRouter.get(
+  '/health',
+  async (_request, response, next) => {
+    try {
+      response.json({
+        ok: true,
+        assistant: await getAssistantOpenAiHealth(),
+      })
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+assistantRouter.get(
   '/context',
   authenticate,
   requireAuth,
@@ -41,7 +56,7 @@ assistantRouter.get(
   async (request, response, next) => {
     try {
       const apartmentId = Number(request.params.apartmentId)
-      const context = await getAssistantContextSnapshot(apartmentId)
+      const context = await getAssistantContextSnapshotOpenAi(apartmentId)
       response.json({ context })
     } catch (error) {
       next(error)
@@ -63,7 +78,7 @@ assistantRouter.post(
         return
       }
 
-      const result = await answerAssistantQuestion(
+      const result = await answerAssistantQuestionOpenAi(
         apartmentId,
         body.question,
         request.auth.account,

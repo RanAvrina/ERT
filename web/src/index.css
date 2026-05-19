@@ -2747,6 +2747,37 @@ input {
   white-space: nowrap;
 }
 
+.tasks-view-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.tasks-view-tabs__button {
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 10px 8px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.tasks-view-tabs__button--active {
+  background: var(--color-primary);
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(46, 196, 182, 0.24);
+}
+
 .task-list--cards {
   display: grid;
   gap: 10px;
@@ -2761,6 +2792,19 @@ input {
   border-radius: 18px;
   background: #fffefa;
   padding: 13px;
+}
+
+.task-list__item--overdue {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0.92), rgba(255, 255, 255, 0.98));
+  box-shadow: inset 4px 0 0 rgba(220, 38, 38, 0.88);
+}
+
+.task-item-card--overdue {
+  border-color: rgba(220, 38, 38, 0.35);
+  box-shadow:
+    inset 4px 0 0 rgba(220, 38, 38, 0.9),
+    0 14px 30px rgba(220, 38, 38, 0.08);
 }
 
 .task-item-card__main {
@@ -2960,6 +3004,11 @@ input {
 
 .home-items-table td {
   color: var(--color-text-secondary);
+}
+
+.task-saved-list__actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .task-list--compact {
@@ -3228,6 +3277,25 @@ input {
 .apartment-info-form__grid {
   display: grid;
   gap: 12px;
+}
+
+.task-list__item-button {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  text-align: right;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.task-list__item-button--with-meta {
+  align-items: start;
 }
 
 .apartment-info-form__textarea {
@@ -3599,6 +3667,42 @@ input {
   grid-template-columns: 1fr 1.4fr;
   gap: 10px;
   padding-top: 2px;
+}
+
+.tasks-open-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.tasks-open-tabs__button {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(46, 196, 182, 0.06);
+  color: var(--color-text-secondary);
+  border-radius: 999px;
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.tasks-open-tabs__button--active {
+  background: rgba(46, 196, 182, 0.18);
+  color: #0f766e;
+  box-shadow: 0 10px 22px rgba(46, 196, 182, 0.12);
+}
+
+.task-updates__item-button {
+  width: 100%;
+  border: none;
+  text-align: right;
+  font: inherit;
+  cursor: pointer;
 }
 
 @media (min-width: 900px) {

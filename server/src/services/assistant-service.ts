@@ -1,3 +1,4 @@
+import { ApiError } from '../lib/api-error.js'
 import type { AuthAccount } from '../types/auth.js'
 import {
   createExpenseAction,
@@ -10,6 +11,11 @@ import {
   createTicketStatusAction,
   type AssistantActionProposal,
 } from './assistant-action-service.js'
+import {
+  isOpenAiResponsesEnabled,
+  runOpenAiToolLoop,
+  type OpenAiFunctionToolDefinition,
+} from './openai-responses-service.js'
 import { getApartmentStateSnapshot } from './apartment-service.js'
 import { listApartmentInfoItemsByApartmentId } from './apartment-info-service.js'
 import { listExpensesByApartmentId, listPaymentsByApartmentId } from './finance-service.js'
@@ -190,6 +196,32 @@ function includesAny(text: string, fragments: string[]) {
   return fragments.some((fragment) => text.includes(fragment))
 }
 
+function answerSystemQuestion(question: string) {
+  const normalized = normalizeText(question)
+  const now = new Date()
+
+  if (includesAny(normalized, ['איזה יום היום', 'מה היום', 'היום איזה יום'])) {
+    return new Intl.DateTimeFormat('he-IL', { weekday: 'long' }).format(now)
+  }
+
+  if (includesAny(normalized, ['מה התאריך היום', 'איזה תאריך היום', 'מה התאריך'])) {
+    return new Intl.DateTimeFormat('he-IL', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(now)
+  }
+
+  if (includesAny(normalized, ['מה השעה', 'איזו שעה', 'כמה השעה'])) {
+    return new Intl.DateTimeFormat('he-IL', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(now)
+  }
+
+  return null
+}
+
 function termsFromQuestion(question: string) {
   return question
     .split(/\s+/)
@@ -236,6 +268,17 @@ function formatTaskStatus(status: Task['status']) {
       return 'בוצעה'
     default:
       return 'בוטלה'
+  }
+}
+
+function formatShoppingStatus(status: ShoppingItem['status']) {
+  switch (status) {
+    case 'open':
+      return 'פתוח'
+    case 'purchased':
+      return 'נקנה'
+    default:
+      return 'בוטל'
   }
 }
 
@@ -1625,6 +1668,479 @@ function buildSuggestions(question: string) {
   return defaultSuggestions
 }
 
+function buildOpenAiAssistantSystemPrompt(data: AssistantData, account: AuthAccount) {
+  const apartmentUsers = data.apartmentState.users.map((user) => ({
+    id: user.id,
+    name: user.name,
+    role: user.role,
+    status: user.status,
+  }))
+
+  const tasks = data.tasks.slice(0, 30).map((task) => ({
+    id: task.id,
+    title: task.title,
+    assigneeAccountId: task.assigneeAccountId,
+    dueDate: task.dueDate,
+    status: task.status,
+  }))
+
+  const shoppingItems = data.shoppingItems.slice(0, 30).map((item) => ({
+    id: item.id,
+    itemName: item.itemName,
+    quantity: item.quantity,
+    category: item.category,
+    status: item.status,
+  }))
+
+  const tickets = data.tickets.slice(0, 20).map((ticket) => ({
+    id: ticket.id,
+    title: ticket.title,
+    category: ticket.category,
+    status: ticket.status,
+  }))
+
+  const apartmentInfoItems = data.apartmentInfoItems.slice(0, 20).map((item) => ({
+    id: item.id,
+    title: item.title,
+    categoryLabel: item.categoryLabel,
+    provider: item.provider,
+    accountNumber: item.accountNumber,
+    phone: item.phone,
+    notes: item.notes,
+  }))
+
+  return [
+    'You are the apartment assistant inside the ERT app.',
+    'Always reply in concise Hebrew.',
+    'You never access the database directly. You only use the provided context and tools.',
+    'If the user asks to change data, call a tool instead of claiming the change is already done.',
+    'Tool calls only prepare a confirmation proposal. After a tool call, explain briefly what was prepared and tell the user to confirm.',
+    'If the request is unclear, ask one short clarifying question in Hebrew.',
+    `Current apartment context: ${JSON.stringify(
+      {
+        apartment: data.apartmentState.apartment,
+        currentUser: {
+          id: account.id,
+          name: data.apartmentState.users.find((user) => user.id === account.id)?.name ?? account.fullName,
+          email: account.email,
+        },
+        users: apartmentUsers,
+        tasks,
+        shoppingItems,
+        tickets,
+        apartmentInfoItems,
+      },
+      null,
+      2,
+    )}`,
+  ].join('\n\n')
+}
+
+function buildOpenAiAssistantTools(): OpenAiFunctionToolDefinition[] {
+  return [
+    {
+      type: 'function',
+      name: 'create_payment',
+      description: 'Prepare a payment record between apartment members.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          payerAccountId: { type: 'number' },
+          payeeAccountId: { type: 'number' },
+          amount: { type: 'number' },
+        },
+        required: ['payeeAccountId', 'amount'],
+      },
+    },
+    {
+      type: 'function',
+      name: 'create_shopping_item',
+      description: 'Prepare a new shopping list item.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          itemName: { type: 'string' },
+          quantity: { type: 'string' },
+        },
+        required: ['itemName'],
+      },
+    },
+    {
+      type: 'function',
+      name: 'create_expense',
+      description: 'Prepare a new expense entry for the apartment.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          amount: { type: 'number' },
+          description: { type: 'string' },
+          category: { type: 'string' },
+          participantAccountIds: {
+            type: 'array',
+            items: { type: 'number' },
+          },
+        },
+        required: ['amount', 'description', 'participantAccountIds'],
+      },
+    },
+    {
+      type: 'function',
+      name: 'create_task',
+      description: 'Prepare a new apartment task.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          description: { type: 'string' },
+          assigneeAccountId: { type: 'number' },
+          dueDate: { type: 'string', description: 'ISO date in YYYY-MM-DD format' },
+        },
+        required: ['title'],
+      },
+    },
+    {
+      type: 'function',
+      name: 'create_ticket',
+      description: 'Prepare a new maintenance/request ticket.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          description: { type: 'string' },
+          category: {
+            type: 'string',
+            enum: ['issue', 'request', 'finance', 'other'],
+          },
+        },
+        required: ['title', 'description', 'category'],
+      },
+    },
+    {
+      type: 'function',
+      name: 'update_task_status',
+      description: 'Prepare a status change for an existing task.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          taskId: { type: 'number' },
+          status: {
+            type: 'string',
+            enum: ['open', 'in_progress', 'done', 'cancelled'],
+          },
+        },
+        required: ['taskId', 'status'],
+      },
+    },
+    {
+      type: 'function',
+      name: 'update_shopping_status',
+      description: 'Prepare a status change for an existing shopping item.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          itemId: { type: 'number' },
+          status: {
+            type: 'string',
+            enum: ['open', 'purchased', 'cancelled'],
+          },
+        },
+        required: ['itemId', 'status'],
+      },
+    },
+    {
+      type: 'function',
+      name: 'update_ticket_status',
+      description: 'Prepare a status change for an existing ticket.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ticketId: { type: 'number' },
+          status: {
+            type: 'string',
+            enum: ['open', 'in_progress', 'closed'],
+          },
+        },
+        required: ['ticketId', 'status'],
+      },
+    },
+  ]
+}
+
+function requireApartmentUser(
+  data: AssistantData,
+  accountId: number,
+  fallbackLabel: string,
+) {
+  const user = data.apartmentState.users.find((entry) => entry.id === accountId)
+  if (!user) {
+    throw new ApiError(400, `User ${fallbackLabel} was not found in this apartment.`)
+  }
+
+  return user
+}
+
+function buildParticipantLabel(data: AssistantData, participantAccountIds: number[]) {
+  if (
+    participantAccountIds.length === data.apartmentState.users.length &&
+    participantAccountIds.every((accountId) => data.apartmentState.users.some((user) => user.id === accountId))
+  ) {
+    return 'בין כל הדיירים'
+  }
+
+  return participantAccountIds
+    .map((accountId) => requireApartmentUser(data, accountId, String(accountId)).name)
+    .join(', ')
+}
+
+async function answerAssistantQuestionWithOpenAi(
+  apartmentId: number,
+  question: string,
+  account: AuthAccount,
+  history: AssistantHistoryMessage[],
+  data: AssistantData,
+  fallbackAnswer: string,
+) {
+  if (!isOpenAiResponsesEnabled()) {
+    return null
+  }
+
+  try {
+    const result = await runOpenAiToolLoop<AssistantActionProposal>({
+      systemPrompt: buildOpenAiAssistantSystemPrompt(data, account),
+      userPrompt: question,
+      history,
+      tools: buildOpenAiAssistantTools(),
+      onToolCall: async (name, args) => {
+        if (name === 'create_payment') {
+          const payeeAccountId = Number(args.payeeAccountId)
+          const payerAccountId =
+            args.payerAccountId == null ? account.id : Number(args.payerAccountId)
+          const amount = Number(args.amount)
+
+          const payee = requireApartmentUser(data, payeeAccountId, 'payee')
+          const payer = requireApartmentUser(data, payerAccountId, 'payer')
+          const proposal = createPaymentAction({
+            apartmentId,
+            account,
+            payerAccountId,
+            payerName: payer.name,
+            payeeAccountId,
+            payeeName: payee.name,
+            amount: amount.toFixed(2),
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        if (name === 'create_shopping_item') {
+          const itemName = String(args.itemName ?? '').trim()
+          if (!itemName) throw new ApiError(400, 'Shopping item name is required.')
+
+          const proposal = createShoppingItemAction({
+            apartmentId,
+            account,
+            itemName,
+            quantity: args.quantity == null ? null : String(args.quantity),
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        if (name === 'create_expense') {
+          const participantAccountIds = Array.isArray(args.participantAccountIds)
+            ? args.participantAccountIds.map((value) => Number(value))
+            : []
+
+          if (!participantAccountIds.length) {
+            throw new ApiError(400, 'At least one participant is required for an expense.')
+          }
+
+          participantAccountIds.forEach((accountId) => requireApartmentUser(data, accountId, String(accountId)))
+
+          const proposal = createExpenseAction({
+            apartmentId,
+            account,
+            amount: Number(args.amount).toFixed(2),
+            description: String(args.description ?? '').trim(),
+            category: args.category == null ? null : String(args.category),
+            participantAccountIds,
+            participantLabel: buildParticipantLabel(data, participantAccountIds),
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        if (name === 'create_task') {
+          const assigneeAccountId =
+            args.assigneeAccountId == null ? null : Number(args.assigneeAccountId)
+          const assigneeLabel =
+            assigneeAccountId == null
+              ? 'ללא אחראי'
+              : requireApartmentUser(data, assigneeAccountId, 'assignee').name
+
+          const proposal = createTaskAction({
+            apartmentId,
+            account,
+            title: String(args.title ?? '').trim(),
+            description: args.description == null ? null : String(args.description),
+            assigneeAccountId,
+            assigneeLabel,
+            dueDate: args.dueDate == null ? null : String(args.dueDate),
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        if (name === 'create_ticket') {
+          const proposal = createTicketAction({
+            apartmentId,
+            account,
+            title: String(args.title ?? '').trim(),
+            description: String(args.description ?? '').trim(),
+            category: (args.category as 'issue' | 'request' | 'finance' | 'other') ?? 'other',
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        if (name === 'update_task_status') {
+          const task = data.tasks.find((item) => item.id === Number(args.taskId))
+          if (!task) throw new ApiError(404, 'Task not found for status update.')
+
+          const nextStatus = args.status as Task['status']
+          const proposal = createTaskStatusAction({
+            apartmentId,
+            account,
+            taskId: task.id,
+            title: task.title,
+            description: task.description,
+            assigneeAccountId: task.assigneeAccountId,
+            dueDate: task.dueDate,
+            status: nextStatus,
+            statusLabel: formatTaskStatus(nextStatus),
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        if (name === 'update_shopping_status') {
+          const item = data.shoppingItems.find((entry) => entry.id === Number(args.itemId))
+          if (!item) throw new ApiError(404, 'Shopping item not found for status update.')
+
+          const nextStatus = args.status as ShoppingItem['status']
+          const proposal = createShoppingStatusAction({
+            apartmentId,
+            account,
+            itemId: item.id,
+            itemName: item.itemName,
+            quantity: item.quantity,
+            category: item.category,
+            status: nextStatus,
+            statusLabel: formatShoppingStatus(nextStatus),
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        if (name === 'update_ticket_status') {
+          const ticket = data.tickets.find((entry) => entry.id === Number(args.ticketId))
+          if (!ticket) throw new ApiError(404, 'Ticket not found for status update.')
+
+          const nextStatus = args.status as Ticket['status']
+          const proposal = createTicketStatusAction({
+            apartmentId,
+            account,
+            ticketId: ticket.id,
+            title: ticket.title,
+            status: nextStatus,
+            statusLabel: formatTicketStatus(nextStatus),
+          })
+
+          return {
+            output: {
+              summary: proposal.summary,
+              token: proposal.token,
+              confirmLabel: proposal.confirmLabel,
+            },
+            sideEffect: proposal,
+          }
+        }
+
+        throw new ApiError(400, `Unknown assistant tool: ${name}`)
+      },
+    })
+
+    if (!result.text && !result.sideEffect) {
+      return null
+    }
+
+    return {
+      answer: result.text || fallbackAnswer,
+      proposedAction: result.sideEffect ?? undefined,
+    }
+  } catch (error) {
+    console.error('OpenAI assistant fallback failed.', error)
+    return null
+  }
+}
+
 export async function getAssistantContextSnapshot(apartmentId: number): Promise<AssistantContextSnapshot> {
   return buildSnapshot(await loadAssistantData(apartmentId))
 }
@@ -1647,6 +2163,18 @@ export async function answerAssistantQuestion(
       answer: 'תכתוב שאלה, ואני אענה לפי הנתונים של הדירה שלך.',
       context: snapshot,
       suggestions: defaultSuggestions,
+      source: 'rules' as const,
+    }
+  }
+
+  const systemAnswer = answerSystemQuestion(normalizedEffectiveQuestion)
+  if (systemAnswer) {
+    console.log('[assistant] source=rules kind=system')
+    return {
+      answer: systemAnswer,
+      context: snapshot,
+      suggestions: buildSuggestions(normalizedEffectiveQuestion),
+      source: 'rules' as const,
     }
   }
 
@@ -1656,14 +2184,35 @@ export async function answerAssistantQuestion(
     account,
     data,
   )
-  const answer = proposedAction
-    ? `זיהיתי בקשה לביצוע פעולה:\n• ${proposedAction.summary}\n\nאם זה נכון, תאשר ואבצע את זה עבורך.`
-    : answerSmartQuestion(data, account, normalizedEffectiveQuestion)
+  const fallbackAnswer = answerSmartQuestion(data, account, normalizedEffectiveQuestion)
+
+  if (proposedAction) {
+    console.log('[assistant] source=rules kind=action')
+    return {
+      answer: `זיהיתי בקשה לביצוע פעולה:\n• ${proposedAction.summary}\n\nאם זה נכון, תאשר ואבצע את זה עבורך.`,
+      context: snapshot,
+      suggestions: buildSuggestions(normalizedEffectiveQuestion),
+      proposedAction,
+      source: 'rules' as const,
+    }
+  }
+
+  const openAiResult = await answerAssistantQuestionWithOpenAi(
+    apartmentId,
+    effectiveQuestion,
+    account,
+    history,
+    data,
+    fallbackAnswer,
+  )
+
+  console.log(`[assistant] source=${openAiResult ? 'openai' : 'rules'} question="${question}"`)
 
   return {
-    answer,
+    answer: openAiResult?.answer ?? fallbackAnswer,
     context: snapshot,
     suggestions: buildSuggestions(normalizedEffectiveQuestion),
-    proposedAction,
+    proposedAction: openAiResult?.proposedAction,
+    source: openAiResult ? ('openai' as const) : ('rules' as const),
   }
 }

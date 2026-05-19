@@ -29,7 +29,15 @@ export interface AssistantContextSnapshot {
 
 export interface AssistantActionProposal {
   token: string
-  type: 'create_payment' | 'create_shopping_item'
+  type:
+    | 'create_payment'
+    | 'create_shopping_item'
+    | 'create_expense'
+    | 'create_task'
+    | 'create_ticket'
+    | 'update_task_status'
+    | 'update_shopping_status'
+    | 'update_ticket_status'
   summary: string
   confirmLabel: string
 }
@@ -39,6 +47,13 @@ export interface AssistantQueryResponse {
   context: AssistantContextSnapshot
   suggestions: string[]
   proposedAction?: AssistantActionProposal
+  source?: 'openai' | 'rules'
+}
+
+export async function readAssistantHealthViaApi(apartmentId: number) {
+  return apiRequest<{ ok: true; assistant: { enabled: boolean } }>(
+    `/apartments/${apartmentId}/assistant/health`,
+  )
 }
 
 export interface AssistantHistoryMessage {

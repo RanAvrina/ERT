@@ -64,6 +64,8 @@ export interface Task {
   due_date: string | null
   status: TaskStatus
   created_by: number
+  created_at?: string
+  updated_at?: string
 }
 
 export interface ApartmentHomeItem {

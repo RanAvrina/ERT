@@ -1,7 +1,6 @@
 import { supabaseAdmin } from '../lib/supabase.js'
 import { ApiError } from '../lib/api-error.js'
 import { createMembership, listActiveMembershipsByApartmentId } from './membership-service.js'
-import { seedApartmentHomeItems } from './home-item-service.js'
 
 interface ApartmentRow {
   id: number
@@ -86,8 +85,6 @@ export async function createApartmentForAccount(input: { accountId: number; name
     accountId: input.accountId,
     role: 'admin',
   })
-
-  await seedApartmentHomeItems(apartment.id)
 
   return apartment
 }

@@ -42,11 +42,12 @@ interface AssistantState {
 
 const AssistantContext = createContext<AssistantState | null>(null)
 export const ASSISTANT_DATA_CHANGED_EVENT = 'assistant:data-changed'
+
 const defaultSuggestions = [
   'תן לי תמונת מצב קצרה',
   'למה אני חייב כסף?',
   'מה צריך לקנות עכשיו?',
-  'מה הוצאנו הכי הרבה כסף החודש?',
+  'מה הכי דחוף בדירה כרגע?',
 ]
 
 function createMessage(role: AssistantMessage['role'], text: string): AssistantMessage {
@@ -127,9 +128,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
       try {
         const previousUserQuestion =
-          [...messages]
-            .reverse()
-            .find((message) => message.role === 'user')?.text ?? null
+          [...messages].reverse().find((message) => message.role === 'user')?.text ?? null
         const history: AssistantHistoryMessage[] = messages
           .slice(-6)
           .map((message) => ({ role: message.role, text: message.text }))
@@ -188,9 +187,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         ...currentMessages,
         createMessage(
           'assistant',
-          error instanceof Error && error.message
-            ? error.message
-            : 'אישור הפעולה נכשל.',
+          error instanceof Error && error.message ? error.message : 'אישור הפעולה נכשל.',
         ),
       ])
     } finally {
@@ -214,9 +211,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         ...currentMessages,
         createMessage(
           'assistant',
-          error instanceof Error && error.message
-            ? error.message
-            : 'ביטול הפעולה נכשל.',
+          error instanceof Error && error.message ? error.message : 'ביטול הפעולה נכשל.',
         ),
       ])
     } finally {
