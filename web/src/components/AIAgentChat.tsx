@@ -379,10 +379,25 @@ export function AIAgentChat() {
           context: agentContext,
         }),
       })
-      const data = (await response.json()) as {
+      const responseText = await response.text()
+      let data: {
         reply?: string
         action?: unknown
         error?: string
+      }
+
+      try {
+        data = responseText
+          ? (JSON.parse(responseText) as {
+              reply?: string
+              action?: unknown
+              error?: string
+            })
+          : {}
+      } catch {
+        throw new Error(
+          responseText || 'הסוכן החזיר תשובה לא תקינה. נסה שוב בעוד רגע.',
+        )
       }
 
       if (!response.ok || data.error) {
