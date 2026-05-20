@@ -10,6 +10,8 @@ interface TaskApiResponse {
   dueDate: string | null
   status: TaskStatus
   createdByAccountId: number
+  createdAt?: string
+  updatedAt?: string
 }
 
 function mapTask(task: TaskApiResponse): Task {
@@ -22,6 +24,8 @@ function mapTask(task: TaskApiResponse): Task {
     due_date: task.dueDate,
     status: task.status,
     created_by: task.createdByAccountId,
+    created_at: task.createdAt,
+    updated_at: task.updatedAt,
   }
 }
 

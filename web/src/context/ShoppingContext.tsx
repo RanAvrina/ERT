@@ -17,8 +17,9 @@ import {
 } from '../data/server/shoppingApi'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
-import { ASSISTANT_DATA_CHANGED_EVENT } from './AssistantContext'
 import type { ShoppingItem, ShoppingItemStatus } from '../types/models'
+
+const ASSISTANT_DATA_CHANGED_EVENT = 'assistant:data-changed'
 
 interface NewShoppingItemInput {
   apartment_id: number

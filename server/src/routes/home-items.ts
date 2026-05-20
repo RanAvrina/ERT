@@ -3,7 +3,6 @@ import { z } from 'zod'
 import { authenticate } from '../middleware/authenticate.js'
 import { requireAuth } from '../middleware/require-auth.js'
 import { requireApartmentMembership } from '../middleware/require-apartment-membership.js'
-import { requireRole } from '../middleware/require-role.js'
 import { getApartmentIdFromParams, getResourceIdFromParams } from '../lib/request.js'
 import { validateBody } from '../lib/validate.js'
 import {
@@ -41,7 +40,6 @@ homeItemsRouter.get('/', async (request, response, next) => {
 
 homeItemsRouter.post(
   '/',
-  requireRole(['admin', 'landlord']),
   async (request, response, next) => {
     try {
       const apartmentId = getApartmentIdFromParams(request)
@@ -61,7 +59,6 @@ homeItemsRouter.post(
 
 homeItemsRouter.patch(
   '/:itemId',
-  requireRole(['admin', 'landlord']),
   async (request, response, next) => {
     try {
       const apartmentId = getApartmentIdFromParams(request)
@@ -83,7 +80,6 @@ homeItemsRouter.patch(
 
 homeItemsRouter.delete(
   '/:itemId',
-  requireRole(['admin', 'landlord']),
   async (request, response, next) => {
     try {
       const apartmentId = getApartmentIdFromParams(request)

@@ -24,8 +24,9 @@ import {
 } from '../data/server/financeApi'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
-import { ASSISTANT_DATA_CHANGED_EVENT } from './AssistantContext'
 import type { Expense, Payment } from '../types/models'
+
+const ASSISTANT_DATA_CHANGED_EVENT = 'assistant:data-changed'
 
 interface NewExpenseInput {
   apartment_id: number

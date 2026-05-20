@@ -3,6 +3,7 @@ server/node_modules/
 web/dist/
 server/dist/
 web/.env.local
+web/.env
 server/.env
 web/.vite/
 web/vite-dev.log

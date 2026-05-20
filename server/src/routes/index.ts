@@ -1,6 +1,5 @@
 import { Router } from 'express'
 import { apartmentInfoRouter } from './apartment-info.js'
-import { assistantRouter } from './assistant.js'
 import { apartmentInvitesRouter } from './apartment-invites.js'
 import { apartmentsRouter } from './apartments.js'
 import { authRouter } from './auth.js'
@@ -19,7 +18,6 @@ export const apiRouter = Router()
 apiRouter.use('/health', healthRouter)
 apiRouter.use('/auth', authRouter)
 apiRouter.use('/invites', invitesRouter)
-apiRouter.use('/apartments', apartmentsRouter)
 apiRouter.use('/apartments/:apartmentId/roommates', roommatesRouter)
 apiRouter.use('/apartments/:apartmentId/invites', apartmentInvitesRouter)
 apiRouter.use('/apartments/:apartmentId/expenses', expensesRouter)
@@ -29,4 +27,4 @@ apiRouter.use('/apartments/:apartmentId/home-items', homeItemsRouter)
 apiRouter.use('/apartments/:apartmentId/shopping', shoppingRouter)
 apiRouter.use('/apartments/:apartmentId/tickets', ticketsRouter)
 apiRouter.use('/apartments/:apartmentId/apartment-info', apartmentInfoRouter)
-apiRouter.use('/apartments/:apartmentId/assistant', assistantRouter)
+apiRouter.use('/apartments', apartmentsRouter)

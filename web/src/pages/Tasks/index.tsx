@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+﻿import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { InlineStatusMenu } from '../../components/InlineStatusMenu'
@@ -21,6 +21,8 @@ import { isSupabaseConfigured } from '../../lib/supabase/env'
 import type { ApartmentHomeItem, Task, TaskStatus } from '../../types/models'
 
 type TaskType = 'cleaning' | 'maintenance' | 'shopping' | 'inspection' | 'other'
+type TasksView = 'tasks' | 'saved'
+type OpenTasksTab = 'mine' | 'others'
 
 interface TaskFormState {
   savedTaskKey: string
@@ -48,7 +50,6 @@ const taskStatusOptions: { value: TaskStatus; label: string }[] = [
   { value: 'open', label: 'פתוחה' },
   { value: 'in_progress', label: 'בביצוע' },
   { value: 'done', label: 'בוצעה' },
-  { value: 'cancelled', label: 'בוטלה' },
 ]
 
 function getTaskTypeLabel(type: TaskType | null | undefined) {
@@ -79,6 +80,15 @@ function formatTaskDate(date: string) {
   }).format(new Date(date))
 }
 
+function formatTaskDateTime(date: string) {
+  return new Intl.DateTimeFormat('he-IL', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(date))
+}
+
 function inferSavedTaskForm(task: Task, savedTasks: ApartmentHomeItem[]): SavedTaskFormState {
   const matchedPrefix = taskTypeOptions.find((option) => task.title.startsWith(`${option.label} - `))
   const targetName = matchedPrefix ? task.title.replace(`${matchedPrefix.label} - `, '').trim() : task.title
@@ -103,7 +113,7 @@ export function TasksPage() {
     () => (current?.roommates ?? []).filter((roommate) => roommate.status === 'active'),
     [current],
   )
-  const canManageSavedTasks = user?.role === 'admin' || user?.role === 'landlord'
+  const canManageSavedTasks = Boolean(user && apartmentId)
   const getUserName = (userId: number | null) =>
     roommates.find((roommate) => roommate.id === userId)?.name
 
@@ -133,13 +143,31 @@ export function TasksPage() {
   const [savedTaskError, setSavedTaskError] = useState('')
   const [isSavingSavedTask, setIsSavingSavedTask] = useState(false)
   const [isDeletingSavedTask, setIsDeletingSavedTask] = useState(false)
+  const [activeView, setActiveView] = useState<TasksView>('tasks')
+  const [openTasksTab, setOpenTasksTab] = useState<OpenTasksTab>('mine')
 
   const today = getTodayDate()
   const apartmentTasks = tasks.filter((task) => task.apartment_id === apartmentId)
   const myOpenTasks = apartmentTasks.filter(
     (task) => task.assignee_id === user?.id && isTaskIncomplete(task),
   )
+  const otherRoommatesTasks = apartmentTasks.filter(
+    (task) => task.assignee_id !== user?.id && isTaskIncomplete(task),
+  )
   const overdueTasks = apartmentTasks.filter((task) => isTaskOverdue(task, today))
+  const recentlyCompletedTasks = apartmentTasks
+    .filter((task) => {
+      if (task.status !== 'done') return false
+      if (!task.updated_at) return false
+      const completedAt = new Date(task.updated_at).getTime()
+      const recentThreshold = Date.now() - 3 * 24 * 60 * 60 * 1000
+      return completedAt >= recentThreshold
+    })
+    .sort((leftTask, rightTask) => {
+      const leftTime = leftTask.updated_at ? new Date(leftTask.updated_at).getTime() : 0
+      const rightTime = rightTask.updated_at ? new Date(rightTask.updated_at).getTime() : 0
+      return rightTime - leftTime
+    })
   const selectedSavedTask =
     savedTasks.find((item) => item.item_key === taskForm.savedTaskKey) ?? null
 
@@ -248,14 +276,13 @@ export function TasksPage() {
     setIsSavedTaskModalOpen(true)
   }
 
-  function openSavedTaskEdit() {
-    if (!selectedSavedTask) return
-    setEditingSavedTaskId(selectedSavedTask.id)
+  function openSavedTaskEditFor(item: ApartmentHomeItem) {
+    setEditingSavedTaskId(item.id)
     setSavedTaskError('')
     setSavedTaskForm({
-      taskType: getTaskTypeByLabel(selectedSavedTask.area),
-      targetName: selectedSavedTask.name,
-      defaultNote: taskForm.description || selectedSavedTask.default_note,
+      taskType: getTaskTypeByLabel(item.area),
+      targetName: item.name,
+      defaultNote: item.default_note,
     })
     setIsSavedTaskModalOpen(true)
   }
@@ -441,6 +468,11 @@ export function TasksPage() {
     }
   }
 
+  function openTaskDetails(task: Task) {
+    setDetailsError('')
+    setSelectedTask(task)
+  }
+
   function renderStatusMenu(task: Task, menuKey: string) {
     const isOpen = openStatusTaskKey === menuKey
 
@@ -478,90 +510,242 @@ export function TasksPage() {
   return (
     <div className="page tasks-page">
       <div className="page__head tasks-hero">
+        {activeView === 'tasks' ? (
+          <button
+            type="button"
+            className="btn btn--primary tasks-hero__action"
+            onClick={openAddTaskModal}
+          >
+            + מטלה חדשה
+          </button>
+        ) : null}
+      </div>
+
+      <div className="tasks-view-tabs" aria-label="תצוגת מודול מטלות">
         <button
           type="button"
-          className="btn btn--primary tasks-hero__action"
-          onClick={openAddTaskModal}
+          className={`tasks-view-tabs__button${
+            activeView === 'tasks' ? ' tasks-view-tabs__button--active' : ''
+          }`}
+          onClick={() => setActiveView('tasks')}
         >
-          + מטלה חדשה
+          מטלות הדירה
+        </button>
+        <button
+          type="button"
+          className={`tasks-view-tabs__button${
+            activeView === 'saved' ? ' tasks-view-tabs__button--active' : ''
+          }`}
+          onClick={() => setActiveView('saved')}
+        >
+          רשימת מטלות
         </button>
       </div>
 
-      <section className="tasks-summary" aria-label="סיכום מטלות">
-        <Card>
-          <p className="tasks-summary__label">המטלות הפתוחות שלך</p>
-          <p className="tasks-summary__value">{myOpenTasks.length}</p>
-        </Card>
-        <Card>
-          <p className="tasks-summary__label">מטלות באיחור בדירה</p>
-          <p className="tasks-summary__value tasks-summary__value--danger">{overdueTasks.length}</p>
-        </Card>
-      </section>
+      {activeView === 'tasks' ? (
+        <>
+          <section className="tasks-summary" aria-label="סיכום מטלות">
+            <Card>
+              <p className="tasks-summary__label">המטלות הפתוחות שלך</p>
+              <p className="tasks-summary__value">{myOpenTasks.length}</p>
+            </Card>
+            <Card>
+              <p className="tasks-summary__label">מטלות באיחור בדירה</p>
+              <p className="tasks-summary__value tasks-summary__value--danger">{overdueTasks.length}</p>
+            </Card>
+          </section>
 
-      <Card title="המטלות הפתוחות שלך" className="status-menu-card">
-        {myOpenTasks.length === 0 ? (
-          <p className="muted">אין לך מטלות פתוחות כרגע.</p>
-        ) : (
-          <ul className="task-list task-list--compact">
-            {myOpenTasks.map((task) => (
-              <li key={task.id} className="task-list__item">
-                <span className="task-list__title">{task.title}</span>
-                {renderStatusMenu(task, `mine-${task.id}`)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <Card title="מטלות באיחור" className="status-menu-card">
-        {overdueTasks.length === 0 ? (
-          <p className="muted">אין מטלות באיחור.</p>
-        ) : (
-          <ul className="task-list task-list--compact">
-            {overdueTasks.map((task) => (
-              <li key={task.id} className="task-list__item">
-                <div>
-                  <span className="task-list__title">{task.title}</span>
-                  <div className="task-list__meta">
-                    {getUserName(task.assignee_id) ?? 'לא הוגדר'} · יעד:{' '}
-                    {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}
-                  </div>
-                </div>
-                {renderStatusMenu(task, `overdue-${task.id}`)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <Card title="מטלות הדירה" className="status-menu-card">
-        {inlineError ? <p className="form-message form-message--error">{inlineError}</p> : null}
-        <ul className="task-list task-list--cards">
-          {apartmentTasks.map((task) => (
-            <li key={task.id} className="task-list__item task-item-card">
+          <Card className="status-menu-card">
+            <div className="tasks-open-tabs" role="tablist" aria-label="רשימות מטלות פתוחות">
               <button
                 type="button"
-                className="expense-item-card__button"
-                onClick={() => setSelectedTask(task)}
+                role="tab"
+                aria-selected={openTasksTab === 'mine'}
+                className={`tasks-open-tabs__button${
+                  openTasksTab === 'mine' ? ' tasks-open-tabs__button--active' : ''
+                }`}
+                onClick={() => setOpenTasksTab('mine')}
               >
-                <div className="task-item-card__main">
-                  <div className="task-list__title">{task.title}</div>
-                  <div className="task-list__meta">
-                    <span>אחראי: {getUserName(task.assignee_id) ?? 'לא הוגדר'}</span>
-                    <span>יעד: {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}</span>
-                  </div>
-                  {task.description ? (
-                    <p className="task-detail-note__preview">{task.description}</p>
-                  ) : null}
-                </div>
+                המטלות הפתוחות שלך
               </button>
-              <div className="task-item-card__status">
-                {renderStatusMenu(task, `apartment-${task.id}`)}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={openTasksTab === 'others'}
+                className={`tasks-open-tabs__button${
+                  openTasksTab === 'others' ? ' tasks-open-tabs__button--active' : ''
+                }`}
+                onClick={() => setOpenTasksTab('others')}
+              >
+                מטלות של שאר הדיירים
+              </button>
+            </div>
+
+            {openTasksTab === 'mine' ? (
+              myOpenTasks.length === 0 ? (
+                <p className="muted">אין לך מטלות פתוחות כרגע.</p>
+              ) : (
+                <ul className="task-list task-list--compact">
+                  {myOpenTasks.map((task) => (
+                    <li
+                      key={task.id}
+                      className={`task-list__item${
+                        isTaskOverdue(task, today) ? ' task-list__item--overdue' : ''
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="task-list__item-button"
+                        onClick={() => openTaskDetails(task)}
+                      >
+                        <span className="task-list__title">{task.title}</span>
+                        <div className="task-list__meta">
+                          יעד: {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}
+                        </div>
+                      </button>
+                      {renderStatusMenu(task, `mine-${task.id}`)}
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : otherRoommatesTasks.length === 0 ? (
+              <p className="muted">אין כרגע מטלות פתוחות לשאר הדיירים.</p>
+            ) : (
+              <ul className="task-list task-list--compact">
+                {otherRoommatesTasks.map((task) => (
+                  <li
+                    key={task.id}
+                    className={`task-list__item${
+                      isTaskOverdue(task, today) ? ' task-list__item--overdue' : ''
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="task-list__item-button task-list__item-button--with-meta"
+                      onClick={() => openTaskDetails(task)}
+                    >
+                      <span className="task-list__title">{task.title}</span>
+                      <div className="task-list__meta">
+                        {getUserName(task.assignee_id) ?? 'לא הוגדר'} · יעד:{' '}
+                        {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}
+                      </div>
+                    </button>
+                    {renderStatusMenu(task, `others-${task.id}`)}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          <Card title="מטלות באיחור" className="status-menu-card">
+            {overdueTasks.length === 0 ? (
+              <p className="muted">אין מטלות באיחור.</p>
+            ) : (
+              <ul className="task-list task-list--compact">
+                {overdueTasks.map((task) => (
+                  <li key={task.id} className="task-list__item task-list__item--overdue">
+                    <button
+                      type="button"
+                      className="task-list__item-button task-list__item-button--with-meta"
+                      onClick={() => openTaskDetails(task)}
+                    >
+                      <span className="task-list__title">{task.title}</span>
+                      <div className="task-list__meta">
+                        {getUserName(task.assignee_id) ?? 'לא הוגדר'} · יעד:{' '}
+                        {task.due_date ? formatTaskDate(task.due_date) : 'לא נקבע'}
+                      </div>
+                    </button>
+                    {renderStatusMenu(task, `overdue-${task.id}`)}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          <Card title="מטלות שהושלמו לאחרונה" className="status-menu-card">
+            {inlineError ? <p className="form-message form-message--error">{inlineError}</p> : null}
+            {recentlyCompletedTasks.length === 0 ? (
+              <p className="muted">אין מטלות שהושלמו ביומיים-שלושה האחרונים.</p>
+            ) : (
+              <div className="home-updates home-updates--figma">
+                {recentlyCompletedTasks.map((task) => (
+                  <button
+                    key={task.id}
+                    type="button"
+                    className="home-updates__item home-updates__item--success task-updates__item-button"
+                    onClick={() => openTaskDetails(task)}
+                  >
+                    <div className="home-updates__content">
+                      <div className="home-updates__text">{task.title}</div>
+                      <div className="home-updates__meta">
+                        {getUserName(task.assignee_id) ?? 'לא הוגדר'} · הושלמה:{' '}
+                        {task.updated_at ? formatTaskDateTime(task.updated_at) : 'לא זמין'}
+                      </div>
+                    </div>
+                    <span className="home-updates__pill" aria-hidden="true" />
+                  </button>
+                ))}
               </div>
-            </li>
-          ))}
-        </ul>
-      </Card>
+            )}
+          </Card>
+        </>
+      ) : (
+        <Card
+          title="רשימת מטלות"
+          action={
+            canManageSavedTasks ? (
+              <button
+                type="button"
+                className="btn btn--secondary btn--small"
+                onClick={openSavedTaskCreate}
+              >
+                הוסף מטלה
+              </button>
+            ) : null
+          }
+        >
+          {savedTaskNotice ? (
+            <p className="task-form__default-note-message">{savedTaskNotice}</p>
+          ) : null}
+
+          {!savedTasks.length ? (
+              <p className="muted">אין עדיין מטלות קבועות ברשימה.</p>
+          ) : (
+            <div className="home-items-table-wrap">
+              <table className="home-items-table">
+                <thead>
+                  <tr>
+                    <th>סוג מטלה</th>
+                    <th>עבור מה המטלה</th>
+                    <th>הערות</th>
+                    <th>פעולות</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {savedTasks.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.area}</td>
+                      <td>{item.name}</td>
+                      <td>{item.default_note}</td>
+                      <td>
+                        <div className="task-saved-list__actions">
+                          <button
+                            type="button"
+                            className="btn btn--secondary btn--small"
+                            onClick={() => openSavedTaskEditFor(item)}
+                          >
+                            עריכה
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
 
       {isTaskModalOpen ? (
         <div className="modal-backdrop" role="presentation">
@@ -601,25 +785,6 @@ export function TasksPage() {
                     ))}
                   </select>
 
-                  {canManageSavedTasks ? (
-                    <button
-                      type="button"
-                      className="btn btn--secondary btn--small"
-                      onClick={openSavedTaskCreate}
-                    >
-                      הוסף מטלה
-                    </button>
-                  ) : null}
-
-                  {canManageSavedTasks && selectedSavedTask ? (
-                    <button
-                      type="button"
-                      className="btn btn--secondary btn--small"
-                      onClick={openSavedTaskEdit}
-                    >
-                      עריכת מטלה
-                    </button>
-                  ) : null}
                 </div>
               </div>
 

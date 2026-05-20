@@ -1,7 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { BottomNav } from '../components/BottomNav'
-import { AssistantLauncher } from '../components/AssistantLauncher'
-import { AssistantPanel } from '../components/AssistantPanel'
+import { AIAgentChat } from '../components/AIAgentChat'
 import { useAuth } from '../context/AuthContext'
 import { useApartment } from '../context/ApartmentContext'
 import { appRoutes } from '../routes/paths'
@@ -57,8 +56,7 @@ export function AppLayout() {
       </main>
 
       <BottomNav />
-      <AssistantPanel />
-      <AssistantLauncher />
+      <AIAgentChat />
     </div>
   )
 }

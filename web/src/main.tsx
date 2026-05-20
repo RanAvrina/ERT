@@ -2,7 +2,6 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { ApartmentProvider } from './context/ApartmentContext'
-import { AssistantProvider } from './context/AssistantContext'
 import { AuthProvider } from './context/AuthContext'
 import { ExpensesProvider } from './context/ExpensesContext'
 import { ShoppingProvider } from './context/ShoppingContext'
@@ -20,9 +19,7 @@ createRoot(document.getElementById('root')!).render(
             <TasksProvider>
               <ShoppingProvider>
                 <TicketsProvider>
-                  <AssistantProvider>
-                    <App />
-                  </AssistantProvider>
+                  <App />
                 </TicketsProvider>
               </ShoppingProvider>
             </TasksProvider>
