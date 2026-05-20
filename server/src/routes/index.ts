@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { apartmentInfoRouter } from './apartment-info.js'
 import { apartmentInvitesRouter } from './apartment-invites.js'
 import { apartmentsRouter } from './apartments.js'
+import { agentRouter } from './agent.js'
 import { authRouter } from './auth.js'
 import { expensesRouter } from './expenses.js'
 import { healthRouter } from './health.js'
@@ -16,6 +17,7 @@ import { ticketsRouter } from './tickets.js'
 export const apiRouter = Router()
 
 apiRouter.use('/health', healthRouter)
+apiRouter.use('/agent', agentRouter)
 apiRouter.use('/auth', authRouter)
 apiRouter.use('/invites', invitesRouter)
 apiRouter.use('/apartments/:apartmentId/roommates', roommatesRouter)

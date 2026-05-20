@@ -51,7 +51,7 @@ Required env vars:
 ```env
 NODE_ENV=production
 PORT=4000
-CLIENT_ORIGIN=https://your-app-domain
+CLIENT_ORIGIN=https://ert4u.com,https://www.ert4u.com
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_ANON_KEY=your-anon-or-publishable-key
 SUPABASE_SERVICE_ROLE_KEY=your-rotated-service-role-key
@@ -80,7 +80,7 @@ Required env vars:
 ```env
 VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_ANON_KEY=your-public-anon-key
-VITE_API_BASE_URL=https://your-api-domain/api
+VITE_API_BASE_URL=https://api.ert4u.com/api
 ```
 
 If the frontend is hosted on `app.example.com`, then the API should usually be something like:
@@ -98,8 +98,8 @@ Recommended:
 
 Then set:
 
-- `CLIENT_ORIGIN=https://app.example.com`
-- `VITE_API_BASE_URL=https://api.example.com/api`
+- `CLIENT_ORIGIN=https://ert4u.com,https://www.ert4u.com`
+- `VITE_API_BASE_URL=https://api.ert4u.com/api`
 
 ## 6. Final validation
 

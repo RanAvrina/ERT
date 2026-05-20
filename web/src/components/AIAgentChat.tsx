@@ -5,6 +5,7 @@ import { useExpenses } from '../context/ExpensesContext'
 import { useShopping } from '../context/ShoppingContext'
 import { useTasks } from '../context/TasksContext'
 import { useTickets } from '../context/TicketsContext'
+import { apiBaseUrl } from '../lib/api/env'
 import type { TaskStatus, TicketCategory } from '../types/models'
 
 interface AgentMessage {
@@ -370,7 +371,8 @@ export function AIAgentChat() {
     setIsSending(true)
 
     try {
-      const response = await fetch('/api/agent', {
+      const agentUrl = apiBaseUrl ? `${apiBaseUrl}/agent` : '/api/agent'
+      const response = await fetch(agentUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
