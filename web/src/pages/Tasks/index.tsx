@@ -414,6 +414,11 @@ export function TasksPage() {
       return
     }
 
+    if (taskForm.dueDate < today) {
+      setFormError('אי אפשר לבחור תאריך יעד שעבר.')
+      return
+    }
+
     const payload = {
       title: buildTaskTitle(selectedSavedTask),
       description: taskForm.description.trim() || null,
@@ -824,6 +829,7 @@ export function TasksPage() {
                     type="date"
                     dir="ltr"
                     value={taskForm.dueDate}
+                    min={today}
                     onChange={(event) => updateTaskForm('dueDate', event.target.value)}
                   />
                 </label>

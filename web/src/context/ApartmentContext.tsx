@@ -162,17 +162,68 @@ export function ApartmentProvider({ children }: { children: ReactNode }) {
     async (input: CreateApartmentInput) => {
       if (isSupabaseConfigured) {
         const response = await createApartmentViaApi(input.apartmentName)
-        const nextState = await loadApartmentStateViaApi(response.apartment.id)
-        nextState.adminContact = { phone: input.adminPhone.trim() }
-        nextState.roommateContacts = {
-          ...nextState.roommateContacts,
-          [nextState.adminUser.id]: { phone: input.adminPhone.trim() },
-        }
-        nextState.credentialsByEmail = input.adminPassword
-          ? {
-              [input.adminEmail.trim().toLowerCase()]: input.adminPassword,
+        let nextState: ApartmentState | null = null
+
+        // The apartment creation request can succeed before the new membership/state
+        // is immediately readable. Retry briefly instead of surfacing a false failure.
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          try {
+            nextState = await loadApartmentStateViaApi(response.apartment.id)
+            break
+          } catch (error) {
+            if (attempt === 3) {
+              console.warn('Apartment was created but state loading failed immediately.', error)
+              break
             }
-          : {}
+
+            await new Promise((resolve) => window.setTimeout(resolve, 350 * (attempt + 1)))
+          }
+        }
+
+        if (!nextState) {
+          const adminId = input.adminUserId ?? Date.now()
+          const fallbackAdmin: User = {
+            id: adminId,
+            apartment_id: response.apartment.id,
+            name: input.adminName.trim(),
+            email: input.adminEmail.trim().toLowerCase(),
+            role: 'admin',
+            status: 'active',
+            joined_at: new Date().toISOString().slice(0, 10),
+          }
+
+          nextState = {
+            apartment: {
+              id: response.apartment.id,
+              name: response.apartment.name,
+              is_active: response.apartment.isActive,
+            },
+            adminUser: fallbackAdmin,
+            adminContact: { phone: input.adminPhone.trim() },
+            roommates: [fallbackAdmin],
+            roommateContacts: {
+              [fallbackAdmin.id]: { phone: input.adminPhone.trim() },
+            },
+            landlordUser: null,
+            landlordContact: null,
+            credentialsByEmail: input.adminPassword
+              ? {
+                  [fallbackAdmin.email]: input.adminPassword,
+                }
+              : {},
+          }
+        } else {
+          nextState.adminContact = { phone: input.adminPhone.trim() }
+          nextState.roommateContacts = {
+            ...nextState.roommateContacts,
+            [nextState.adminUser.id]: { phone: input.adminPhone.trim() },
+          }
+          nextState.credentialsByEmail = input.adminPassword
+            ? {
+                [input.adminEmail.trim().toLowerCase()]: input.adminPassword,
+              }
+            : {}
+        }
 
         return persistApartmentState(nextState)
       }

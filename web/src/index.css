@@ -3640,10 +3640,11 @@ input {
 }
 
 .tasks-open-tabs {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
+  align-items: stretch;
 }
 
 .tasks-open-tabs__button {
@@ -3652,9 +3653,13 @@ input {
   color: var(--color-text-secondary);
   border-radius: 999px;
   padding: 9px 16px;
+  width: 100%;
+  min-width: 0;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+  text-align: center;
+  justify-content: center;
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast),
