@@ -310,7 +310,8 @@ export function AIAgentChat() {
           description: compactText(asString(payload.description), 'הוצאה חדשה'),
           category: compactText(asString(payload.category), null) || null,
           date: normalizeDate(payload.date),
-          participant_ids: activeRoommates.length > 0 ? activeRoommates.map((roommate) => roommate.id) : [paidBy],
+          participant_ids:
+            activeRoommates.length > 0 ? activeRoommates.map((roommate) => roommate.id) : [paidBy],
         })
         resultMessage = 'בוצע: ההוצאה נוספה לרשימת ההוצאות.'
       }
@@ -397,9 +398,7 @@ export function AIAgentChat() {
             })
           : {}
       } catch {
-        throw new Error(
-          responseText || 'הסוכן החזיר תשובה לא תקינה. נסה שוב בעוד רגע.',
-        )
+        throw new Error(responseText || 'הסוכן החזיר תשובה לא תקינה. נסה שוב בעוד רגע.')
       }
 
       if (!response.ok || data.error) {
@@ -456,9 +455,7 @@ export function AIAgentChat() {
               </div>
             ))}
             {isSending ? (
-              <div className="ai-agent__message ai-agent__message--assistant">
-                חושב על תשובה...
-              </div>
+              <div className="ai-agent__message ai-agent__message--assistant">חושב על תשובה...</div>
             ) : null}
           </div>
 
@@ -467,10 +464,18 @@ export function AIAgentChat() {
               <span>פעולה מוצעת</span>
               <strong>{describeAction(pendingAction)}</strong>
               <div className="ai-agent__pending-actions">
-                <button type="button" className="btn btn--secondary btn--small" onClick={() => setPendingAction(null)}>
+                <button
+                  type="button"
+                  className="btn btn--secondary btn--small"
+                  onClick={() => setPendingAction(null)}
+                >
                   ביטול
                 </button>
-                <button type="button" className="btn btn--primary btn--small" onClick={executePendingAction}>
+                <button
+                  type="button"
+                  className="btn btn--primary btn--small"
+                  onClick={executePendingAction}
+                >
                   בצע
                 </button>
               </div>
@@ -486,14 +491,22 @@ export function AIAgentChat() {
               placeholder="כתוב לסוכן..."
               disabled={isSending}
             />
-            <button type="submit" className="btn btn--primary btn--small" disabled={isSending || !input.trim()}>
+            <button
+              type="submit"
+              className="btn btn--primary btn--small"
+              disabled={isSending || !input.trim()}
+            >
               שלח
             </button>
           </form>
         </section>
       ) : null}
 
-      <button type="button" className="ai-agent__toggle" onClick={() => setIsOpen((current) => !current)}>
+      <button
+        type="button"
+        className="ai-agent__toggle"
+        onClick={() => setIsOpen((currentValue) => !currentValue)}
+      >
         AI
       </button>
     </div>

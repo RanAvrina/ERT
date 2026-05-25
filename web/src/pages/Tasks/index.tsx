@@ -724,10 +724,10 @@ export function TasksPage() {
                 <tbody>
                   {savedTasks.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.area}</td>
-                      <td>{item.name}</td>
-                      <td>{item.default_note}</td>
-                      <td>
+                      <td data-label="סוג מטלה">{item.area}</td>
+                      <td data-label="עבור מה המטלה">{item.name}</td>
+                      <td data-label="הערות">{item.default_note}</td>
+                      <td data-label="פעולות">
                         <div className="task-saved-list__actions">
                           <button
                             type="button"

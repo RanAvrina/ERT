@@ -14,7 +14,7 @@ import { isValidEmail, isValidPhone } from '../../utils/validation'
 export function CreateApartmentPage() {
   const navigate = useNavigate()
   const { createApartment } = useApartment()
-  const { createAccountIdentity, logout, refreshSessionUser } = useAuth()
+  const { createAccountIdentity, refreshSessionUser } = useAuth()
   const [form, setForm] = useState({
     apartmentName: '',
     adminName: '',
@@ -34,7 +34,19 @@ export function CreateApartmentPage() {
   })
   const [verificationEmail, setVerificationEmail] = useState('')
 
+  function navigateToLoginAfterApartmentCreation() {
+    navigate(appRoutes.login, {
+      replace: true,
+      state: {
+        notice: 'הדירה נפתחה בהצלחה. התחברו עם החשבון שיצרתם כדי להמשיך.',
+        email: form.email.trim().toLowerCase(),
+      },
+    })
+  }
+
   async function finalizeApartmentCreation(adminUserId?: number) {
+    let apartmentCreated = false
+
     try {
       await createApartment({
         apartmentName: form.apartmentName,
@@ -43,17 +55,22 @@ export function CreateApartmentPage() {
         adminEmail: form.email,
         adminUserId,
       })
-
-      const refreshedUser = await refreshSessionUser()
+      apartmentCreated = true
       clearPendingApartment()
 
+      const refreshedUser = await refreshSessionUser()
       if (!refreshedUser || refreshedUser.apartment_id <= 0) {
-        throw new Error('לא הצלחנו להשלים את פתיחת הדירה. נסו להתחבר מחדש.')
+        navigateToLoginAfterApartmentCreation()
+        return
       }
 
       navigate(appRoutes.dashboard)
     } catch (createError) {
-      logout()
+      if (apartmentCreated) {
+        navigateToLoginAfterApartmentCreation()
+        return
+      }
+
       setError(
         createError instanceof Error && createError.message
           ? createError.message
@@ -192,7 +209,7 @@ export function CreateApartmentPage() {
                   apartmentName: event.target.value,
                 }))
               }
-              placeholder="לדוגמה: דירת השותפים — הרצל"
+              placeholder="לדוגמה: דירת השותפים - הרצל"
             />
             {errors.apartmentName ? (
               <span className="field__error">{errors.apartmentName}</span>

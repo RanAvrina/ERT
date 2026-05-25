@@ -18,6 +18,11 @@ import {
 } from '../../utils/pendingApartment'
 import { isValidEmail } from '../../utils/validation'
 
+interface LoginPageLocationState {
+  notice?: string
+  email?: string
+}
+
 function parseInviteQuery(search: string) {
   const params = new URLSearchParams(search)
   const apartmentId = Number(params.get('inviteApartmentId') ?? '')
@@ -39,15 +44,19 @@ export function LoginPage() {
   const { user, login, logout, refreshSessionUser, sendPasswordResetEmail } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
+  const locationState = (location.state as LoginPageLocationState | null) ?? null
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [errors, setErrors] = useState({ email: '', password: '' })
   const [isResetOpen, setIsResetOpen] = useState(false)
   const [resetEmail, setResetEmail] = useState('')
   const [resetError, setResetError] = useState('')
   const [resetSuccess, setResetSuccess] = useState('')
   const [isCompletingInvite, setIsCompletingInvite] = useState(false)
+
   const inviteFromQuery = useMemo(() => parseInviteQuery(location.search), [location.search])
   const pendingInviteForSession = readPendingInvite()
   const pendingApartmentForSession = readPendingApartment()
@@ -70,6 +79,20 @@ export function LoginPage() {
       navigate(appRoutes.login, { replace: true })
     }
   }, [inviteFromQuery, location.search, logout, navigate, user])
+
+  useEffect(() => {
+    if (!locationState?.notice && !locationState?.email) return
+
+    if (locationState.notice) {
+      setNotice(locationState.notice)
+    }
+
+    if (locationState.email) {
+      setEmail(locationState.email)
+    }
+
+    navigate(location.pathname, { replace: true })
+  }, [location.pathname, locationState?.email, locationState?.notice, navigate])
 
   useEffect(() => {
     if (!user || !pendingInviteForSession || isCompletingInvite || inviteFromQuery) return
@@ -137,6 +160,7 @@ export function LoginPage() {
     setEmail('')
     setPassword('')
     setError('')
+    setNotice('')
   }
 
   function toggleResetPassword() {
@@ -249,6 +273,8 @@ export function LoginPage() {
       return true
     }
 
+    let apartmentCreated = false
+
     try {
       await createApartment({
         apartmentName: pendingApartment.apartmentName,
@@ -257,15 +283,36 @@ export function LoginPage() {
         adminEmail: pendingApartment.adminEmail,
         adminUserId: result.user.id,
       })
+      apartmentCreated = true
+      clearPendingApartment()
 
       const refreshedUser = await refreshSessionUser()
       if (!refreshedUser || refreshedUser.apartment_id <= 0) {
-        throw new Error('לא הצלחנו להשלים את פתיחת הדירה. נסו להתחבר מחדש.')
+        logout()
+        navigate(appRoutes.login, {
+          replace: true,
+          state: {
+            notice: 'הדירה נפתחה בהצלחה. התחברו עם החשבון שיצרתם כדי להמשיך.',
+            email: pendingApartment.adminEmail,
+          },
+        })
+        return true
       }
 
-      clearPendingApartment()
       navigate(appRoutes.dashboard, { replace: true })
     } catch (pendingApartmentError) {
+      if (apartmentCreated) {
+        logout()
+        navigate(appRoutes.login, {
+          replace: true,
+          state: {
+            notice: 'הדירה נפתחה בהצלחה. התחברו עם החשבון שיצרתם כדי להמשיך.',
+            email: pendingApartment.adminEmail,
+          },
+        })
+        return true
+      }
+
       logout()
       setError(
         pendingApartmentError instanceof Error && pendingApartmentError.message
@@ -280,6 +327,7 @@ export function LoginPage() {
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
+    setNotice('')
     const nextErrors = { email: '', password: '' }
 
     if (!email.trim()) {
@@ -414,6 +462,7 @@ export function LoginPage() {
           </p>
         ) : null}
 
+        {notice ? <p className="form-message form-message--success">{notice}</p> : null}
         {error ? <p className="form-message form-message--error">{error}</p> : null}
 
         <button type="submit" className="btn btn--primary btn--block">
