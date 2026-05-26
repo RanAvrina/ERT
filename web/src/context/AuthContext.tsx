@@ -14,6 +14,7 @@ import {
   useAuthSessionStore,
 } from '../data/repositories/authRepository'
 import {
+  clearPendingInviteMetadata,
   getCurrentAuthUser,
   sendPasswordResetEmail as sendSupabasePasswordResetEmail,
   signInWithPassword as signInWithSupabasePassword,
@@ -25,6 +26,7 @@ import {
   ensureAccountViaApi,
   readBootstrapViaApi,
 } from '../data/server/authApi'
+import { buildAppUrl } from '../lib/app/url'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { appRoutes } from '../routes/paths'
 import { readPendingInvite, type InviteRole } from '../utils/invite'
@@ -76,11 +78,11 @@ function normalizeEmail(email: string) {
 }
 
 function buildEmailVerificationRedirect() {
-  if (typeof window === 'undefined' || !window.location.origin) {
+  if (typeof window === 'undefined') {
     return undefined
   }
 
-  return `${window.location.origin}${appRoutes.login}`
+  return buildAppUrl(appRoutes.login)
 }
 
 function buildDetachedUser(account: AccountIdentity, role: User['role'] = 'tenant'): User {
@@ -238,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             })
 
             if (joinResult.ok) {
+              await clearPendingInviteMetadata().catch(() => undefined)
               snapshot = await readBootstrapViaApi()
               account =
                 snapshot.account &&
@@ -661,7 +664,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const redirectTo =
         typeof window !== 'undefined'
-          ? `${window.location.origin}${appRoutes.resetPassword}`
+          ? buildAppUrl(appRoutes.resetPassword)
           : appRoutes.resetPassword
 
       await sendSupabasePasswordResetEmail(email, redirectTo)

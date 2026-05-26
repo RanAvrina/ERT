@@ -4,7 +4,7 @@ export function toHebrewAuthMessage(rawMessage: string) {
   if (!message) return 'לא הצלחנו להשלים את הפעולה.'
 
   if (message.includes('email not confirmed')) {
-    return 'כתובת המייל עדיין לא אומתה. פתחו את המייל ולחצו על קישור האימות לפני התחברות.'
+    return 'כתובת המייל עדיין לא אומתה. פתחו את המייל ולחצו על קישור האימות לפני ההתחברות.'
   }
 
   if (
@@ -45,7 +45,7 @@ export function toHebrewAuthMessage(rawMessage: string) {
     message.includes('invite has expired') ||
     message.includes('invite was not found')
   ) {
-    return 'קישור ההזמנה לא פעיל יותר. צריך לבקש קישור הזמנה חדש.'
+    return 'קישור ההזמנה כבר לא פעיל. צריך לבקש קישור הזמנה חדש.'
   }
 
   if (

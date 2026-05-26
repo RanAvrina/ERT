@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+
 import { AuthShell } from '../../components/auth/AuthShell'
+import { clearPendingInviteMetadata } from '../../data/supabase/authRepository'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { readUsableInviteViaApi } from '../../data/server/invitesApi'
+import { navigateToAppRoute } from '../../lib/app/url'
 import { isSupabaseConfigured } from '../../lib/supabase/env'
 import { appRoutes } from '../../routes/paths'
+import { toHebrewAuthMessage } from '../../utils/authMessages'
 import {
   clearPendingInvite,
   isTerminalPendingInviteError,
@@ -13,7 +17,6 @@ import {
   type InviteRole,
 } from '../../utils/invite'
 import { clearPendingApartment } from '../../utils/pendingApartment'
-import { toHebrewAuthMessage } from '../../utils/authMessages'
 
 export function JoinApartmentPage() {
   const location = useLocation()
@@ -21,8 +24,10 @@ export function JoinApartmentPage() {
   const { apartmentId } = useParams()
   const { current, getApartmentById, completeInviteJoin } = useApartment()
   const { user, logout, refreshSessionUser } = useAuth()
+
   const [remoteApartmentName, setRemoteApartmentName] = useState<string | null>(null)
   const [isRemoteInviteValid, setIsRemoteInviteValid] = useState<boolean | null>(null)
+  const [isCheckingInvite, setIsCheckingInvite] = useState(false)
   const [autoJoinError, setAutoJoinError] = useState('')
   const [isAutoJoining, setIsAutoJoining] = useState(false)
 
@@ -45,27 +50,32 @@ export function JoinApartmentPage() {
       if (!isSupabaseConfigured || !inviteToken || !Number.isFinite(inviteApartmentId)) {
         setIsRemoteInviteValid(null)
         setRemoteApartmentName(null)
+        setIsCheckingInvite(false)
         return
       }
 
+      setIsCheckingInvite(true)
+
       try {
         const invite = await readUsableInviteViaApi(inviteToken)
+        if (cancelled) return
+
         if (!invite || invite.apartmentId !== inviteApartmentId) {
-          if (!cancelled) {
-            setIsRemoteInviteValid(false)
-            setRemoteApartmentName(null)
-          }
+          setIsRemoteInviteValid(false)
+          setRemoteApartmentName(null)
           return
         }
 
-        if (!cancelled) {
-          setIsRemoteInviteValid(true)
-          setRemoteApartmentName(invite.apartmentName ?? null)
-        }
+        setIsRemoteInviteValid(true)
+        setRemoteApartmentName(invite.apartmentName ?? null)
       } catch {
         if (!cancelled) {
           setIsRemoteInviteValid(false)
           setRemoteApartmentName(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setIsCheckingInvite(false)
         }
       }
     }
@@ -81,6 +91,10 @@ export function JoinApartmentPage() {
     ? getApartmentById(inviteApartmentId) ??
       (current?.apartment.id === inviteApartmentId ? current : null)
     : null
+
+  const isInvitePendingCheck = isSupabaseConfigured
+    ? Boolean(inviteToken && (isCheckingInvite || isRemoteInviteValid === null))
+    : false
 
   const isInviteValid = isSupabaseConfigured
     ? Boolean(inviteToken && isRemoteInviteValid)
@@ -105,7 +119,7 @@ export function JoinApartmentPage() {
   function switchAccount(target: typeof appRoutes.login | typeof appRoutes.register) {
     rememberInvite()
     logout()
-    navigate(target)
+    navigate(target, { state: { inviteFlow: true } })
   }
 
   useEffect(() => {
@@ -137,20 +151,29 @@ export function JoinApartmentPage() {
         return
       }
 
+      clearPendingInvite()
+      await clearPendingInviteMetadata().catch(() => undefined)
+
       const refreshedUser = await refreshSessionUser()
       if (cancelled) return
 
       if (!refreshedUser || refreshedUser.apartment_id !== inviteApartmentId) {
-        clearPendingInvite()
-        setAutoJoinError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
-        setIsAutoJoining(false)
+        logout()
+        navigate(appRoutes.login, {
+          replace: true,
+          state: {
+            notice: 'החשבון כבר שויך לדירה. התחברו כדי להמשיך.',
+            email: activeUser.email,
+          },
+        })
         return
       }
 
-      clearPendingInvite()
-      navigate(inviteRole === 'landlord' ? appRoutes.tickets : appRoutes.dashboard, {
-        replace: true,
-      })
+      navigateToAppRoute(
+        navigate,
+        inviteRole === 'landlord' ? appRoutes.tickets : appRoutes.dashboard,
+        { replace: true },
+      )
     }
 
     void completeJoinFromInvitePage()
@@ -165,6 +188,7 @@ export function JoinApartmentPage() {
     inviteToken,
     isAutoJoining,
     isInviteValid,
+    logout,
     navigate,
     refreshSessionUser,
     user,
@@ -191,7 +215,9 @@ export function JoinApartmentPage() {
           <p className="invite-summary__meta">תפקיד בהזמנה: {roleLabel}</p>
         </div>
 
-        {isInviteValid ? (
+        {isInvitePendingCheck ? (
+          <p className="form-message">בודקים את קישור ההזמנה...</p>
+        ) : isInviteValid ? (
           <>
             <p className="form-message">
               הוזמנתם להצטרף ל{apartmentName}. ההצטרפות תושלם אחרי התחברות או יצירת חשבון.
@@ -231,6 +257,7 @@ export function JoinApartmentPage() {
                   to={appRoutes.login}
                   className="btn btn--primary btn--block"
                   onClick={rememberInvite}
+                  state={{ inviteFlow: true }}
                 >
                   יש לי חשבון
                 </Link>
@@ -238,6 +265,7 @@ export function JoinApartmentPage() {
                   to={appRoutes.register}
                   className="btn btn--secondary btn--block"
                   onClick={rememberInvite}
+                  state={{ inviteFlow: true }}
                 >
                   צור חשבון חדש
                 </Link>

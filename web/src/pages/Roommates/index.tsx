@@ -4,6 +4,7 @@ import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import { createInviteViaApi } from '../../data/server/invitesApi'
+import { buildAppUrl } from '../../lib/app/url'
 import { isSupabaseConfigured } from '../../lib/supabase/env'
 import { toHebrewAuthMessage } from '../../utils/authMessages'
 
@@ -75,25 +76,17 @@ export function RoommatesPage() {
   }
 
   function buildInviteLink(role: 'tenant' | 'landlord' = 'tenant') {
-    const base =
-      typeof window !== 'undefined' && window.location.origin
-        ? window.location.origin
-        : 'https://ert.app'
     const apartmentId = current?.apartment.id ?? 0
     const token =
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
         : `invite-${Date.now()}`
-    return `${base}/invite/${apartmentId}?role=${role}&token=${token}`
+    return buildAppUrl(`/invite/${apartmentId}?role=${role}&token=${token}`)
   }
 
   function buildInviteLinkFromToken(role: 'tenant' | 'landlord', token: string) {
-    const base =
-      typeof window !== 'undefined' && window.location.origin
-        ? window.location.origin
-        : 'https://ert.app'
     const apartmentId = current?.apartment.id ?? 0
-    return `${base}/invite/${apartmentId}?role=${role}&token=${token}`
+    return buildAppUrl(`/invite/${apartmentId}?role=${role}&token=${token}`)
   }
 
   async function openInviteModal() {

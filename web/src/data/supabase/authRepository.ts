@@ -72,6 +72,28 @@ export async function updateAuthPassword(password: string) {
   return data.user
 }
 
+export async function clearPendingInviteMetadata() {
+  const client = ensureValue(supabase, 'Supabase client is not configured.')
+  const { data: currentUserData, error: readError } = await client.auth.getUser()
+  if (readError) throw new Error(readError.message)
+
+  const currentMetadata =
+    currentUserData.user?.user_metadata && typeof currentUserData.user.user_metadata === 'object'
+      ? currentUserData.user.user_metadata
+      : {}
+
+  const { error } = await client.auth.updateUser({
+    data: {
+      ...currentMetadata,
+      pending_invite_apartment_id: null,
+      pending_invite_role: null,
+      pending_invite_token: null,
+    },
+  })
+
+  if (error) throw new Error(error.message)
+}
+
 export async function hasAuthSession() {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
   const { data, error } = await client.auth.getSession()

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+
 import { AuthShell } from '../../components/auth/AuthShell'
+import { clearPendingInviteMetadata } from '../../data/supabase/authRepository'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
+import { navigateToAppRoute } from '../../lib/app/url'
 import { appRoutes } from '../../routes/paths'
 import { toHebrewAuthMessage } from '../../utils/authMessages'
 import {
@@ -12,15 +15,13 @@ import {
   savePendingInvite,
   type InviteRole,
 } from '../../utils/invite'
-import {
-  clearPendingApartment,
-  readPendingApartment,
-} from '../../utils/pendingApartment'
+import { clearPendingApartment, readPendingApartment } from '../../utils/pendingApartment'
 import { isValidEmail } from '../../utils/validation'
 
 interface LoginPageLocationState {
   notice?: string
   email?: string
+  inviteFlow?: boolean
 }
 
 function parseInviteQuery(search: string) {
@@ -56,10 +57,14 @@ export function LoginPage() {
   const [resetError, setResetError] = useState('')
   const [resetSuccess, setResetSuccess] = useState('')
   const [isCompletingInvite, setIsCompletingInvite] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const inviteFromQuery = useMemo(() => parseInviteQuery(location.search), [location.search])
   const pendingInviteForSession = readPendingInvite()
   const pendingApartmentForSession = readPendingApartment()
+  const [isInviteFlowActive, setIsInviteFlowActive] = useState(
+    Boolean(inviteFromQuery || locationState?.inviteFlow),
+  )
 
   useEffect(() => {
     if (!inviteFromQuery) return
@@ -81,7 +86,7 @@ export function LoginPage() {
   }, [inviteFromQuery, location.search, logout, navigate, user])
 
   useEffect(() => {
-    if (!locationState?.notice && !locationState?.email) return
+    if (!locationState?.notice && !locationState?.email && !locationState?.inviteFlow) return
 
     if (locationState.notice) {
       setNotice(locationState.notice)
@@ -91,11 +96,37 @@ export function LoginPage() {
       setEmail(locationState.email)
     }
 
+    if (locationState.inviteFlow) {
+      setIsInviteFlowActive(true)
+    }
+
     navigate(location.pathname, { replace: true })
-  }, [location.pathname, locationState?.email, locationState?.notice, navigate])
+  }, [
+    location.pathname,
+    locationState?.email,
+    locationState?.inviteFlow,
+    locationState?.notice,
+    navigate,
+  ])
 
   useEffect(() => {
-    if (!user || !pendingInviteForSession || isCompletingInvite || inviteFromQuery) return
+    if (inviteFromQuery || locationState?.inviteFlow) return
+    if (!pendingInviteForSession) return
+
+    clearPendingInvite()
+    setIsInviteFlowActive(false)
+  }, [inviteFromQuery, locationState?.inviteFlow, pendingInviteForSession])
+
+  useEffect(() => {
+    if (
+      !user ||
+      !pendingInviteForSession ||
+      !isInviteFlowActive ||
+      isCompletingInvite ||
+      inviteFromQuery
+    ) {
+      return
+    }
 
     const activeUser = user
     const pendingInvite = pendingInviteForSession
@@ -117,24 +148,35 @@ export function LoginPage() {
       if (!joinResult.ok || !joinResult.user) {
         if (isTerminalPendingInviteError(joinResult.error)) {
           clearPendingInvite()
+          setIsInviteFlowActive(false)
         }
         setError(toHebrewAuthMessage(joinResult.error))
         setIsCompletingInvite(false)
         return
       }
 
+      clearPendingInvite()
+      await clearPendingInviteMetadata().catch(() => undefined)
+
       const refreshedUser = await refreshSessionUser()
       if (cancelled) return
 
       if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
-        clearPendingInvite()
-        setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
-        setIsCompletingInvite(false)
+        logout()
+        setIsInviteFlowActive(false)
+        navigate(appRoutes.login, {
+          replace: true,
+          state: {
+            notice: 'החשבון כבר שויך לדירה. התחברו כדי להמשיך.',
+            email: activeUser.email,
+          },
+        })
         return
       }
 
-      clearPendingInvite()
-      navigate(
+      setIsInviteFlowActive(false)
+      navigateToAppRoute(
+        navigate,
         pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard,
         { replace: true },
       )
@@ -149,6 +191,8 @@ export function LoginPage() {
     completeInviteJoin,
     inviteFromQuery,
     isCompletingInvite,
+    isInviteFlowActive,
+    logout,
     navigate,
     pendingInviteForSession,
     refreshSessionUser,
@@ -157,6 +201,8 @@ export function LoginPage() {
 
   function logoutForLogin() {
     logout()
+    clearPendingInvite()
+    setIsInviteFlowActive(false)
     setEmail('')
     setPassword('')
     setError('')
@@ -194,8 +240,13 @@ export function LoginPage() {
   }
 
   async function completePendingInviteFlow() {
+    if (!isInviteFlowActive) return false
+
     const pendingInvite = readPendingInvite()
-    if (!pendingInvite) return false
+    if (!pendingInvite) {
+      setIsInviteFlowActive(false)
+      return false
+    }
 
     const result = await login({
       email,
@@ -224,23 +275,34 @@ export function LoginPage() {
     if (!joinResult.ok || !joinResult.user) {
       if (isTerminalPendingInviteError(joinResult.error)) {
         clearPendingInvite()
+        setIsInviteFlowActive(false)
       }
       logout()
       setError(toHebrewAuthMessage(joinResult.error))
       return true
     }
 
+    clearPendingInvite()
+    await clearPendingInviteMetadata().catch(() => undefined)
+
     const refreshedUser = await refreshSessionUser()
     if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
-      clearPendingInvite()
+      setIsInviteFlowActive(false)
       logout()
-      setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
+      navigate(appRoutes.login, {
+        replace: true,
+        state: {
+          notice: 'החשבון כבר שויך לדירה. התחברו כדי להמשיך.',
+          email,
+        },
+      })
       return true
     }
 
-    clearPendingInvite()
     clearPendingApartment()
-    navigate(
+    setIsInviteFlowActive(false)
+    navigateToAppRoute(
+      navigate,
       pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard,
       { replace: true },
     )
@@ -299,7 +361,7 @@ export function LoginPage() {
         return true
       }
 
-      navigate(appRoutes.dashboard, { replace: true })
+      navigateToAppRoute(navigate, appRoutes.dashboard, { replace: true })
     } catch (pendingApartmentError) {
       if (apartmentCreated) {
         logout()
@@ -326,6 +388,8 @@ export function LoginPage() {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isSubmitting || isCompletingInvite) return
+
     setError('')
     setNotice('')
     const nextErrors = { email: '', password: '' }
@@ -343,21 +407,28 @@ export function LoginPage() {
     setErrors(nextErrors)
     if (nextErrors.email || nextErrors.password) return
 
-    if (await completePendingInviteFlow()) return
-    if (await completePendingApartmentFlow()) return
+    setIsSubmitting(true)
+    try {
+      if (await completePendingInviteFlow()) return
+      if (await completePendingApartmentFlow()) return
 
-    const result = await login({ email, password })
-    if (!result.ok) {
-      setError(toHebrewAuthMessage(result.error))
-      return
+      const result = await login({ email, password })
+      if (!result.ok) {
+        setError(toHebrewAuthMessage(result.error))
+        return
+      }
+
+      navigateToAppRoute(
+        navigate,
+        result.user?.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard,
+        { replace: true },
+      )
+    } finally {
+      setIsSubmitting(false)
     }
-
-    navigate(result.user?.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard, {
-      replace: true,
-    })
   }
 
-  if (user && (pendingInviteForSession || pendingApartmentForSession)) {
+  if (user && (pendingApartmentForSession || (pendingInviteForSession && isInviteFlowActive))) {
     return (
       <AuthShell
         title="השלמת כניסה"
@@ -427,7 +498,7 @@ export function LoginPage() {
         </p>
       }
     >
-      <form className="form-stack" onSubmit={onSubmit} noValidate>
+      <form className="form-stack" onSubmit={onSubmit} noValidate aria-busy={isSubmitting}>
         <label className="field">
           <span className="field__label">כתובת אימייל</span>
           <input
@@ -436,6 +507,7 @@ export function LoginPage() {
             autoComplete="username"
             dir="ltr"
             value={email}
+            disabled={isSubmitting || isCompletingInvite}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="you@example.com"
           />
@@ -450,6 +522,7 @@ export function LoginPage() {
             autoComplete="current-password"
             dir="ltr"
             value={password}
+            disabled={isSubmitting || isCompletingInvite}
             onChange={(event) => setPassword(event.target.value)}
             placeholder="הסיסמה שלכם"
           />
@@ -465,8 +538,26 @@ export function LoginPage() {
         {notice ? <p className="form-message form-message--success">{notice}</p> : null}
         {error ? <p className="form-message form-message--error">{error}</p> : null}
 
-        <button type="submit" className="btn btn--primary btn--block">
-          כניסה לחשבון
+        {isSubmitting ? (
+          <p className="auth-submit-status" role="status" aria-live="polite">
+            <span className="auth-submit-status__spinner" aria-hidden="true" />
+            <span>מתחבר לחשבון, זה יכול לקחת כמה שניות...</span>
+          </p>
+        ) : null}
+
+        <button
+          type="submit"
+          className="btn btn--primary btn--block"
+          disabled={isSubmitting || isCompletingInvite}
+        >
+          {isSubmitting ? (
+            <>
+              <span className="btn__spinner" aria-hidden="true" />
+              <span>מתחבר לחשבון...</span>
+            </>
+          ) : (
+            'כניסה לחשבון'
+          )}
         </button>
       </form>
 

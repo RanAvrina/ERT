@@ -71,6 +71,12 @@ interface ExistingMembership {
 const ApartmentContext = createContext<ApartmentContextValue | null>(null)
 const APARTMENT_DATA_CHANGED_EVENT = 'assistant:data-changed'
 
+function sleep(milliseconds: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds)
+  })
+}
+
 function findExistingMembership(
   registry: Record<number, ApartmentState>,
   user: User,
@@ -430,17 +436,37 @@ export function ApartmentProvider({ children }: { children: ReactNode }) {
             })
           }
 
-          const nextState = await activateApartment(apartmentId)
+          let nextState: ApartmentState | null = null
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            nextState = await activateApartment(apartmentId)
+            if (nextState) break
+            await sleep(250 * (attempt + 1))
+          }
+          const normalizedEmail = user.email.trim().toLowerCase()
           const joinedUser =
-            nextState?.roommates.find((roommate) => roommate.id === user.id) ??
-            (nextState?.landlordUser?.id === user.id
+            nextState?.roommates.find(
+              (roommate) =>
+                roommate.id === user.id ||
+                roommate.email.trim().toLowerCase() === normalizedEmail,
+            ) ??
+            (nextState?.landlordUser &&
+            (nextState.landlordUser.id === user.id ||
+              nextState.landlordUser.email.trim().toLowerCase() === normalizedEmail)
               ? nextState.landlordUser
               : null)
 
           if (!nextState || !joinedUser) {
             return {
-              ok: false,
-              user: null,
+              ok: true,
+              user,
+              error: '',
+            }
+          }
+
+          if (!nextState || !joinedUser) {
+            return {
+              ok: true,
+              user,
               error: 'לא הצלחנו להשלים את השיוך לדירה.',
             }
           }

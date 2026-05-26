@@ -1,9 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
+
 import { AuthShell } from '../../components/auth/AuthShell'
+import { clearPendingInviteMetadata } from '../../data/supabase/authRepository'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
+import { buildAppUrl, navigateToAppRoute } from '../../lib/app/url'
 import { appRoutes } from '../../routes/paths'
+import type { User } from '../../types/models'
 import { toHebrewAuthMessage } from '../../utils/authMessages'
 import {
   clearPendingInvite,
@@ -12,192 +16,87 @@ import {
 } from '../../utils/invite'
 import { clearPendingApartment } from '../../utils/pendingApartment'
 import { isValidEmail, isValidPhone } from '../../utils/validation'
-import type { User } from '../../types/models'
 
-function buildTransientInviteUser(input: {
-  id: number
-  name: string
-  email: string
-  role: User['role']
-}): User {
+function buildTransientInviteUser(email: string): User {
   return {
-    id: input.id,
+    id: 0,
     apartment_id: 0,
-    name: input.name,
-    email: input.email,
-    role: input.role,
+    role: 'tenant',
+    name: '',
+    email,
     status: 'active',
     joined_at: new Date().toISOString().slice(0, 10),
   }
 }
 
+function buildInviteVerificationRedirect() {
+  if (typeof window === 'undefined') {
+    return undefined
+  }
+
+  const invite = readPendingInvite()
+  if (!invite) {
+    return buildAppUrl(appRoutes.login)
+  }
+
+  const params = new URLSearchParams({
+    inviteApartmentId: String(invite.apartmentId),
+    role: invite.role,
+  })
+
+  if (invite.token) {
+    params.set('token', invite.token)
+  }
+
+  return buildAppUrl(`${appRoutes.login}?${params.toString()}`)
+}
+
+function sleep(milliseconds: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds)
+  })
+}
+
 export function RegisterPage() {
-  const { completeInviteJoin } = useApartment()
-  const { user, createAccountIdentity, logout, refreshSessionUser } = useAuth()
   const navigate = useNavigate()
-  const [form, setForm] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    password: '',
-  })
-  const [error, setError] = useState('')
-  const [errors, setErrors] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    password: '',
-  })
-  const [verificationEmail, setVerificationEmail] = useState('')
-  const pendingInviteForSession = readPendingInvite()
+  const { user, refreshSessionUser, logout, createAccountIdentity } = useAuth()
+  const { completeInviteJoin } = useApartment()
+  const pendingInvite = readPendingInvite()
 
-  function buildInviteVerificationRedirect() {
-    const pendingInvite = readPendingInvite()
-    if (!pendingInvite || typeof window === 'undefined' || !window.location.origin) {
-      return undefined
-    }
+  const [displayName, setDisplayName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [verificationEmail, setVerificationEmail] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-    const params = new URLSearchParams({
-      inviteApartmentId: String(pendingInvite.apartmentId),
-      role: pendingInvite.role,
-    })
-
-    if (pendingInvite.token) {
-      params.set('token', pendingInvite.token)
-    }
-
-    return `${window.location.origin}${appRoutes.login}?${params.toString()}`
-  }
-
-  function logoutForInviteRegister() {
-    logout()
-    setError('')
-  }
-
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError('')
-    const nextErrors = { name: '', phone: '', email: '', password: '' }
-
-    if (!form.name.trim()) {
-      nextErrors.name = 'חובה למלא שם מלא.'
-    }
-
-    if (!form.phone.trim()) {
-      nextErrors.phone = 'נדרש מספר טלפון.'
-    } else if (!isValidPhone(form.phone)) {
-      nextErrors.phone = 'מספר הטלפון לא תקין.'
-    }
-
-    if (!form.email.trim()) {
-      nextErrors.email = 'נדרשת כתובת אימייל.'
-    } else if (!isValidEmail(form.email)) {
-      nextErrors.email = 'כתובת האימייל לא תקינה.'
-    }
-
-    if (!form.password.trim()) {
-      nextErrors.password = 'צריך לבחור סיסמה.'
-    } else if (form.password.trim().length < 6) {
-      nextErrors.password = 'הסיסמה צריכה לכלול לפחות 6 תווים.'
-    }
-
-    setErrors(nextErrors)
-    if (nextErrors.name || nextErrors.phone || nextErrors.email || nextErrors.password) {
-      return
-    }
-
-    const pendingInvite = readPendingInvite()
-    if (!pendingInvite) {
-      setError('פתיחת חשבון חדש זמינה רק דרך פתיחת דירה חדשה או דרך קישור הזמנה.')
-      return
-    }
-
-    clearPendingApartment()
-
-    const accountResult = await createAccountIdentity({
-      ...form,
-      role: pendingInvite.role,
-      emailRedirectTo: buildInviteVerificationRedirect(),
-    })
-
-    if (accountResult.requiresEmailVerification) {
-      setVerificationEmail(accountResult.email ?? form.email.trim().toLowerCase())
-      setForm({
-        name: '',
-        phone: '',
-        email: '',
-        password: '',
-      })
-      return
-    }
-
-    if (!accountResult.ok || !accountResult.account) {
-      setError(toHebrewAuthMessage(accountResult.error))
-      return
-    }
-
-    const joinResult = await completeInviteJoin({
-      apartmentId: pendingInvite.apartmentId,
-      role: pendingInvite.role,
-      token: pendingInvite.token,
-      user: buildTransientInviteUser({
-        id: accountResult.account.id,
-        name: accountResult.account.name,
-        email: accountResult.account.email,
-        role: pendingInvite.role,
-      }),
-    })
-
-    if (!joinResult.ok || !joinResult.user) {
-      if (isTerminalPendingInviteError(joinResult.error)) {
-        clearPendingInvite()
-      }
-      logout()
-      setError(toHebrewAuthMessage(joinResult.error))
-      return
-    }
-
-    const refreshedUser = await refreshSessionUser()
-    if (!refreshedUser || refreshedUser.apartment_id !== pendingInvite.apartmentId) {
-      clearPendingInvite()
-      logout()
-      setError('לא הצלחנו לשייך את החשבון לדירה שאליה הוזמנתם. נסו שוב מקישור ההזמנה.')
-      return
-    }
-
-    clearPendingInvite()
-    navigate(pendingInvite.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard, {
-      replace: true,
-    })
-  }
-
-  if (user && pendingInviteForSession) {
+  if (user && pendingInvite) {
     return (
       <AuthShell
         title="בחירת חשבון להצטרפות"
         subtitle="צריך לאשר עם איזה חשבון ממשיכים"
         hideIntro
-        footer={null}
+        footer={
+          <>
+            כבר רשומים? <Link to={appRoutes.login}>עברו להתחברות</Link>
+          </>
+        }
       >
         <div className="form-stack">
           <p className="form-message">
-            כרגע מחוברים כ{user.name} ({user.email}). כדי ליצור חשבון חדש דרך ההזמנה צריך
-            להתנתק מהחשבון הנוכחי.
+            כרגע מחובר החשבון <strong>{user.email}</strong>. כדי ליצור חשבון חדש ולהשלים את
+            ההצטרפות צריך להתנתק קודם.
           </p>
-          {error ? <p className="form-message form-message--error">{error}</p> : null}
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={logoutForInviteRegister}
-          >
-            התנתק וצור חשבון חדש
+          <button className="btn btn--primary btn--block" type="button" onClick={() => logout()}>
+            התנתק ויצור חשבון חדש
           </button>
         </div>
       </AuthShell>
     )
   }
 
-  if (user && user.apartment_id > 0) {
+  if (user?.apartment_id && user.apartment_id > 0) {
     return (
       <Navigate
         to={user.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard}
@@ -212,18 +111,17 @@ export function RegisterPage() {
         title="החלפת חשבון"
         subtitle="כבר יש session פעיל. כדי לפתוח חשבון חדש צריך להתנתק קודם."
         hideIntro
-        footer={null}
+        footer={
+          <>
+            כבר רשומים? <Link to={appRoutes.login}>עברו להתחברות</Link>
+          </>
+        }
       >
         <div className="form-stack">
           <p className="form-message">
-            מחוברים כעת כ{user.name} ({user.email}).
+            אתם כבר מחוברים עם <strong>{user.email}</strong>.
           </p>
-          {error ? <p className="form-message form-message--error">{error}</p> : null}
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={logoutForInviteRegister}
-          >
+          <button className="btn btn--primary btn--block" type="button" onClick={() => logout()}>
             התנתק ופתח חשבון אחר
           </button>
         </div>
@@ -231,8 +129,128 @@ export function RegisterPage() {
     )
   }
 
-  if (!pendingInviteForSession) {
+  if (!pendingInvite) {
     return <Navigate to={appRoutes.login} replace />
+  }
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (isSubmitting) return
+
+    const trimmedName = displayName.trim()
+    const trimmedPhone = phone.trim()
+    const normalizedEmail = email.trim().toLowerCase()
+
+    if (!trimmedName) {
+      setError('חובה למלא שם מלא.')
+      return
+    }
+
+    if (!trimmedPhone) {
+      setError('נדרש מספר טלפון.')
+      return
+    }
+
+    if (!isValidPhone(trimmedPhone)) {
+      setError('מספר הטלפון לא תקין.')
+      return
+    }
+
+    if (!normalizedEmail) {
+      setError('נדרשת כתובת אימייל.')
+      return
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      setError('כתובת האימייל לא תקינה.')
+      return
+    }
+
+    if (!password) {
+      setError('צריך לבחור סיסמה.')
+      return
+    }
+
+    if (password.length < 6) {
+      setError('הסיסמה צריכה לכלול לפחות 6 תווים.')
+      return
+    }
+
+    const latestInvite = readPendingInvite()
+    if (!latestInvite) {
+      setError('פתיחת חשבון חדש זמינה רק דרך קישור הזמנה פעיל.')
+      return
+    }
+
+    setError(null)
+    setIsSubmitting(true)
+    clearPendingApartment()
+
+    try {
+      const identityResult = await createAccountIdentity({
+        name: trimmedName,
+        phone: trimmedPhone,
+        email: normalizedEmail,
+        password,
+        emailRedirectTo: buildInviteVerificationRedirect(),
+      })
+
+      if (!identityResult.ok) {
+        setError(toHebrewAuthMessage(identityResult.error))
+        return
+      }
+
+      if (identityResult.requiresEmailVerification) {
+        setVerificationEmail(normalizedEmail)
+        setPassword('')
+        return
+      }
+
+      const joinResult = await completeInviteJoin({
+        apartmentId: latestInvite.apartmentId,
+        role: latestInvite.role,
+        user: buildTransientInviteUser(normalizedEmail),
+        token: latestInvite.token,
+      })
+
+      if (!joinResult.ok) {
+        if (isTerminalPendingInviteError(joinResult.error)) {
+          clearPendingInvite()
+        }
+        logout()
+        setError(toHebrewAuthMessage(joinResult.error))
+        return
+      }
+
+      clearPendingInvite()
+      await clearPendingInviteMetadata().catch(() => undefined)
+
+      let refreshedUser = await refreshSessionUser(normalizedEmail)
+      if (!refreshedUser || refreshedUser.apartment_id !== latestInvite.apartmentId) {
+        await sleep(350)
+        refreshedUser = await refreshSessionUser(normalizedEmail)
+      }
+
+      if (!refreshedUser || refreshedUser.apartment_id !== latestInvite.apartmentId) {
+        logout()
+        navigate(appRoutes.login, {
+          replace: true,
+          state: {
+            notice: 'החשבון נוצר בהצלחה. התחברו עם החשבון החדש כדי להיכנס לדירה.',
+            email: normalizedEmail,
+          },
+        })
+        return
+      }
+
+      navigateToAppRoute(
+        navigate,
+        refreshedUser.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard,
+        { replace: true },
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   if (verificationEmail) {
@@ -242,29 +260,22 @@ export function RegisterPage() {
         subtitle="צריך לאשר את כתובת המייל לפני שאפשר להשלים את ההצטרפות"
         hideIntro
         footer={
-          <p className="auth-card__footer-text">
-            אחרי אישור המייל עברו ל{' '}
-            <Link to={appRoutes.login} className="link">
-              התחברות
-            </Link>
-          </p>
+          <>
+            כבר אישרתם? <Link to={appRoutes.login}>עברו להתחברות</Link>
+          </>
         }
       >
         <div className="form-stack">
           <p className="form-message form-message--success">
-            שלחנו מייל אימות לכתובת {verificationEmail}.
+            שלחנו מייל אימות לכתובת <strong>{verificationEmail}</strong>.
           </p>
           <p className="form-message">
             פתחו את המייל, לחצו על קישור האימות, ואז התחברו עם החשבון החדש. ההזמנה תושלם
             אוטומטית אחרי ההתחברות.
           </p>
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={() => navigate(appRoutes.login)}
-          >
+          <Link className="btn btn--primary btn--block" to={appRoutes.login}>
             מעבר להתחברות
-          </button>
+          </Link>
         </div>
       </AuthShell>
     )
@@ -276,69 +287,85 @@ export function RegisterPage() {
       subtitle="החשבון החדש ישויך לדירה שאליה הוזמנתם"
       hideIntro
       footer={
-        <p className="auth-card__footer-text">
-          כבר רשומים?{' '}
-          <Link to={appRoutes.login} className="link">
-            עברו להתחברות
-          </Link>
-        </p>
+        <>
+          כבר רשומים? <Link to={appRoutes.login}>עברו להתחברות</Link>
+        </>
       }
     >
-      <form className="form-stack" onSubmit={onSubmit} noValidate>
+      <form className="form-stack" onSubmit={onSubmit} noValidate aria-busy={isSubmitting}>
         <label className="field">
           <span className="field__label">שם מלא</span>
           <input
             className="field__input"
+            autoComplete="name"
+            disabled={isSubmitting}
+            onChange={(event) => setDisplayName(event.target.value)}
+            required
             type="text"
-            value={form.name}
-            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-            placeholder="איך השותפים יראו אתכם?"
+            value={displayName}
           />
-          {errors.name ? <span className="field__error">{errors.name}</span> : null}
         </label>
+
         <label className="field">
           <span className="field__label">מספר טלפון</span>
           <input
             className="field__input"
-            type="tel"
+            autoComplete="tel"
+            disabled={isSubmitting}
             dir="ltr"
-            value={form.phone}
-            onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
-            placeholder="050-123-4567"
+            inputMode="tel"
+            onChange={(event) => setPhone(event.target.value)}
+            required
+            type="tel"
+            value={phone}
           />
-          {errors.phone ? <span className="field__error">{errors.phone}</span> : null}
         </label>
+
         <label className="field">
           <span className="field__label">כתובת אימייל</span>
           <input
             className="field__input"
+            autoComplete="email"
+            disabled={isSubmitting}
+            onChange={(event) => setEmail(event.target.value)}
+            required
             type="email"
-            dir="ltr"
-            autoComplete="username"
-            value={form.email}
-            onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
-            placeholder="name@example.com"
+            value={email}
           />
-          {errors.email ? <span className="field__error">{errors.email}</span> : null}
         </label>
+
         <label className="field">
           <span className="field__label">סיסמה</span>
           <input
             className="field__input"
-            type="password"
-            dir="ltr"
             autoComplete="new-password"
-            value={form.password}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, password: event.target.value }))
-            }
-            placeholder="לפחות 6 תווים"
+            disabled={isSubmitting}
+            minLength={6}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+            type="password"
+            value={password}
           />
-          {errors.password ? <span className="field__error">{errors.password}</span> : null}
         </label>
+
         {error ? <p className="form-message form-message--error">{error}</p> : null}
-        <button type="submit" className="btn btn--primary btn--block">
-          יצירת חשבון והמשך
+
+        {isSubmitting ? (
+          <p className="auth-submit-status" role="status" aria-live="polite">
+            <span className="auth-submit-status__spinner" aria-hidden="true" />
+            <span>יוצר את החשבון, זה יכול לקחת כמה שניות...</span>
+          </p>
+        ) : null}
+
+        <button type="submit" className="btn btn--primary btn--block" disabled={isSubmitting}>
+          {isSubmitting ? (
+            <>
+              <span className="btn__spinner" aria-hidden="true" />
+              <span>יוצר את החשבון...</span>
+            </>
+          ) : (
+            'יצירת חשבון והמשך'
+          )}
         </button>
       </form>
     </AuthShell>
