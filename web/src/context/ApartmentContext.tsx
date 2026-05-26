@@ -69,6 +69,7 @@ interface ExistingMembership {
 }
 
 const ApartmentContext = createContext<ApartmentContextValue | null>(null)
+const APARTMENT_DATA_CHANGED_EVENT = 'assistant:data-changed'
 
 function findExistingMembership(
   registry: Record<number, ApartmentState>,
@@ -298,7 +299,13 @@ export function ApartmentProvider({ children }: { children: ReactNode }) {
 
       if (isSupabaseConfigured) {
         await removeRoommateViaApi(current.apartment.id, roommateId)
-        return activateApartment(current.apartment.id)
+        const nextState = await activateApartment(current.apartment.id)
+        window.dispatchEvent(
+          new CustomEvent(APARTMENT_DATA_CHANGED_EVENT, {
+            detail: { apartmentId: current.apartment.id },
+          }),
+        )
+        return nextState
       }
 
       return persistApartmentState({

@@ -69,6 +69,30 @@ function mapPaymentRowToModel(
   }
 }
 
+function hasMappedExpenseParticipants(
+  participants: ExpenseParticipantRow[],
+  membershipToAccount: Map<number, number>,
+) {
+  return participants.every((participant) => (membershipToAccount.get(participant.membership_id) ?? 0) > 0)
+}
+
+function hasMappedExpensePayer(
+  row: ExpenseRow,
+  membershipToAccount: Map<number, number>,
+) {
+  return (membershipToAccount.get(row.paid_by_membership_id) ?? 0) > 0
+}
+
+function hasMappedPaymentMembers(
+  row: PaymentRow,
+  membershipToAccount: Map<number, number>,
+) {
+  return (
+    (membershipToAccount.get(row.payer_membership_id) ?? 0) > 0 &&
+    (membershipToAccount.get(row.payee_membership_id) ?? 0) > 0
+  )
+}
+
 export async function listExpensesByApartmentId(apartmentId: number) {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
   const { accountToMembership, membershipToAccount } = await loadMembershipMaps(apartmentId)
@@ -98,14 +122,20 @@ export async function listExpensesByApartmentId(apartmentId: number) {
   const participants = (participantData ?? []) as ExpenseParticipantRow[]
   const attachments = (attachmentData ?? []) as ExpenseAttachmentRow[]
 
-  return rows.map((row) =>
-    mapExpenseRowToModel(
+  return rows
+    .map((row) => ({
       row,
-      participants.filter((participant) => participant.expense_id === row.id),
-      attachments.filter((attachment) => attachment.expense_id === row.id),
-      membershipToAccount,
-    ),
-  )
+      rowParticipants: participants.filter((participant) => participant.expense_id === row.id),
+      rowAttachments: attachments.filter((attachment) => attachment.expense_id === row.id),
+    }))
+    .filter(
+      ({ row, rowParticipants }) =>
+        hasMappedExpensePayer(row, membershipToAccount) &&
+        hasMappedExpenseParticipants(rowParticipants, membershipToAccount),
+    )
+    .map(({ row, rowParticipants, rowAttachments }) =>
+      mapExpenseRowToModel(row, rowParticipants, rowAttachments, membershipToAccount),
+    )
 }
 
 export async function createExpenseRecord(input: {
@@ -231,7 +261,9 @@ export async function listPaymentsByApartmentId(apartmentId: number) {
     .order('id', { ascending: false })
   ensureSupabaseResult(error, 'Failed to load payments')
 
-  return ((data ?? []) as PaymentRow[]).map((row) => mapPaymentRowToModel(row, membershipToAccount))
+  return ((data ?? []) as PaymentRow[])
+    .filter((row) => hasMappedPaymentMembers(row, membershipToAccount))
+    .map((row) => mapPaymentRowToModel(row, membershipToAccount))
 }
 
 export async function createPaymentRecord(input: {

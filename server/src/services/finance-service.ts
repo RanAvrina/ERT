@@ -118,6 +118,24 @@ function mapPayment(row: PaymentRow, membershipToAccount: Map<number, number>) {
   }
 }
 
+function hasMappedExpenseParticipants(
+  participants: ExpenseParticipantRow[],
+  membershipToAccount: Map<number, number>,
+) {
+  return participants.every((participant) => (membershipToAccount.get(participant.membership_id) ?? 0) > 0)
+}
+
+function hasMappedExpensePayer(row: ExpenseRow, membershipToAccount: Map<number, number>) {
+  return (membershipToAccount.get(row.paid_by_membership_id) ?? 0) > 0
+}
+
+function hasMappedPaymentMembers(row: PaymentRow, membershipToAccount: Map<number, number>) {
+  return (
+    (membershipToAccount.get(row.payer_membership_id) ?? 0) > 0 &&
+    (membershipToAccount.get(row.payee_membership_id) ?? 0) > 0
+  )
+}
+
 async function getExpenseById(expenseId: number, membershipToAccount: Map<number, number>) {
   const { data, error } = await supabaseAdmin
     .from('expenses')
@@ -237,14 +255,20 @@ export async function listExpensesByApartmentId(apartmentId: number) {
   const participants = (participantsData ?? []) as ExpenseParticipantRow[]
   const attachments = (attachmentsData ?? []) as ExpenseAttachmentRow[]
 
-  return rows.map((row) =>
-    mapExpense(
+  return rows
+    .map((row) => ({
       row,
-      participants.filter((participant) => participant.expense_id === row.id),
-      attachments.filter((attachment) => attachment.expense_id === row.id),
-      membershipToAccount,
-    ),
-  )
+      rowParticipants: participants.filter((participant) => participant.expense_id === row.id),
+      rowAttachments: attachments.filter((attachment) => attachment.expense_id === row.id),
+    }))
+    .filter(
+      ({ row, rowParticipants }) =>
+        hasMappedExpensePayer(row, membershipToAccount) &&
+        hasMappedExpenseParticipants(rowParticipants, membershipToAccount),
+    )
+    .map(({ row, rowParticipants, rowAttachments }) =>
+      mapExpense(row, rowParticipants, rowAttachments, membershipToAccount),
+    )
 }
 
 export async function createExpense(input: {
@@ -430,7 +454,9 @@ export async function listPaymentsByApartmentId(apartmentId: number) {
     .order('id', { ascending: false })
 
   if (error) throw new Error(`Failed to load payments: ${error.message}`)
-  return ((data ?? []) as PaymentRow[]).map((row) => mapPayment(row, membershipToAccount))
+  return ((data ?? []) as PaymentRow[])
+    .filter((row) => hasMappedPaymentMembers(row, membershipToAccount))
+    .map((row) => mapPayment(row, membershipToAccount))
 }
 
 export async function createPayment(input: {

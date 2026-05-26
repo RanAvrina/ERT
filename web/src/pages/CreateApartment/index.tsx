@@ -33,6 +33,7 @@ export function CreateApartmentPage() {
     confirmPassword: '',
   })
   const [verificationEmail, setVerificationEmail] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   function navigateToLoginAfterApartmentCreation() {
     navigate(appRoutes.login, {
@@ -81,6 +82,8 @@ export function CreateApartmentPage() {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isSubmitting) return
+
     setError('')
     const nextErrors = {
       apartmentName: '',
@@ -143,26 +146,31 @@ export function CreateApartmentPage() {
       adminEmail: form.email.trim().toLowerCase(),
     })
 
-    const accountResult = await createAccountIdentity({
-      name: form.adminName,
-      phone: form.phone,
-      email: form.email,
-      password: form.password,
-      role: 'admin',
-    })
+    setIsSubmitting(true)
+    try {
+      const accountResult = await createAccountIdentity({
+        name: form.adminName,
+        phone: form.phone,
+        email: form.email,
+        password: form.password,
+        role: 'admin',
+      })
 
-    if (accountResult.requiresEmailVerification) {
-      setVerificationEmail(accountResult.email ?? form.email.trim().toLowerCase())
-      return
+      if (accountResult.requiresEmailVerification) {
+        setVerificationEmail(accountResult.email ?? form.email.trim().toLowerCase())
+        return
+      }
+
+      if (!accountResult.ok || !accountResult.account) {
+        clearPendingApartment()
+        setError(accountResult.error)
+        return
+      }
+
+      await finalizeApartmentCreation(accountResult.account.id)
+    } finally {
+      setIsSubmitting(false)
     }
-
-    if (!accountResult.ok || !accountResult.account) {
-      clearPendingApartment()
-      setError(accountResult.error)
-      return
-    }
-
-    await finalizeApartmentCreation(accountResult.account.id)
   }
 
   return (
@@ -196,12 +204,13 @@ export function CreateApartmentPage() {
           </button>
         </div>
       ) : (
-        <form className="form-stack" onSubmit={onSubmit} noValidate>
+        <form className="form-stack" onSubmit={onSubmit} noValidate aria-busy={isSubmitting}>
           <label className="field">
             <span className="field__label">שם הדירה</span>
             <input
               className="field__input"
               type="text"
+              disabled={isSubmitting}
               value={form.apartmentName}
               onChange={(event) =>
                 setForm((current) => ({
@@ -215,11 +224,13 @@ export function CreateApartmentPage() {
               <span className="field__error">{errors.apartmentName}</span>
             ) : null}
           </label>
+
           <label className="field">
             <span className="field__label">שם מלא של הדייר הראשון</span>
             <input
               className="field__input"
               type="text"
+              disabled={isSubmitting}
               value={form.adminName}
               onChange={(event) =>
                 setForm((current) => ({ ...current, adminName: event.target.value }))
@@ -230,12 +241,14 @@ export function CreateApartmentPage() {
               <span className="field__error">{errors.adminName}</span>
             ) : null}
           </label>
+
           <label className="field">
             <span className="field__label">מספר טלפון</span>
             <input
               className="field__input"
               type="tel"
               dir="ltr"
+              disabled={isSubmitting}
               value={form.phone}
               onChange={(event) =>
                 setForm((current) => ({ ...current, phone: event.target.value }))
@@ -244,12 +257,14 @@ export function CreateApartmentPage() {
             />
             {errors.phone ? <span className="field__error">{errors.phone}</span> : null}
           </label>
+
           <label className="field">
             <span className="field__label">כתובת אימייל</span>
             <input
               className="field__input"
               type="email"
               dir="ltr"
+              disabled={isSubmitting}
               value={form.email}
               onChange={(event) =>
                 setForm((current) => ({ ...current, email: event.target.value }))
@@ -258,6 +273,7 @@ export function CreateApartmentPage() {
             />
             {errors.email ? <span className="field__error">{errors.email}</span> : null}
           </label>
+
           <label className="field">
             <span className="field__label">סיסמה</span>
             <input
@@ -265,6 +281,7 @@ export function CreateApartmentPage() {
               type="password"
               dir="ltr"
               autoComplete="new-password"
+              disabled={isSubmitting}
               value={form.password}
               onChange={(event) =>
                 setForm((current) => ({ ...current, password: event.target.value }))
@@ -275,6 +292,7 @@ export function CreateApartmentPage() {
               <span className="field__error">{errors.password}</span>
             ) : null}
           </label>
+
           <label className="field">
             <span className="field__label">אימות סיסמה</span>
             <input
@@ -282,6 +300,7 @@ export function CreateApartmentPage() {
               type="password"
               dir="ltr"
               autoComplete="new-password"
+              disabled={isSubmitting}
               value={form.confirmPassword}
               onChange={(event) =>
                 setForm((current) => ({ ...current, confirmPassword: event.target.value }))
@@ -292,9 +311,25 @@ export function CreateApartmentPage() {
               <span className="field__error">{errors.confirmPassword}</span>
             ) : null}
           </label>
+
           {error ? <p className="form-message form-message--error">{error}</p> : null}
-          <button type="submit" className="btn btn--primary btn--block">
-            יצירת דירה
+
+          {isSubmitting ? (
+            <p className="auth-submit-status" role="status" aria-live="polite">
+              <span className="auth-submit-status__spinner" aria-hidden="true" />
+              <span>יוצר את הדירה, זה יכול לקחת כמה שניות...</span>
+            </p>
+          ) : null}
+
+          <button type="submit" className="btn btn--primary btn--block" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <span className="btn__spinner" aria-hidden="true" />
+                <span>יוצר את הדירה...</span>
+              </>
+            ) : (
+              'יצירת דירה'
+            )}
           </button>
         </form>
       )}

@@ -19,6 +19,8 @@ import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
 import type { Task, TaskStatus } from '../types/models'
 
+const ASSISTANT_DATA_CHANGED_EVENT = 'assistant:data-changed'
+
 interface NewTaskInput {
   apartment_id: number
   title: string
@@ -92,6 +94,34 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true
+    }
+  }, [current?.apartment.id, setTasks])
+
+  useEffect(() => {
+    const apartmentId: number | null = current?.apartment.id ?? null
+    if (!isSupabaseConfigured || !apartmentId) return
+    const resolvedApartmentId = apartmentId
+
+    async function refreshTasks() {
+      try {
+        const nextTasks = await listTasksViaApi(resolvedApartmentId)
+        setTasks(nextTasks)
+        nextTaskId.current = Math.max(...nextTasks.map((item) => item.id), 0) + 1
+        loadedApartmentIdRef.current = resolvedApartmentId
+      } catch (error) {
+        console.error('Failed to refresh tasks after assistant action.', error)
+      }
+    }
+
+    function handleAssistantDataChanged(event: Event) {
+      const customEvent = event as CustomEvent<{ apartmentId?: number }>
+      if (customEvent.detail?.apartmentId !== resolvedApartmentId) return
+      void refreshTasks()
+    }
+
+    window.addEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
+    return () => {
+      window.removeEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
     }
   }, [current?.apartment.id, setTasks])
 

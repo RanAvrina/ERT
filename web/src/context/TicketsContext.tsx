@@ -30,6 +30,8 @@ import type {
   TicketStatus,
 } from '../types/models'
 
+const ASSISTANT_DATA_CHANGED_EVENT = 'assistant:data-changed'
+
 export type TicketAttachment = TicketAttachmentModel
 
 interface NewTicketInput {
@@ -109,6 +111,38 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true
+    }
+  }, [current?.apartment.id, setComments, setTickets])
+
+  useEffect(() => {
+    const apartmentId: number | null = current?.apartment.id ?? null
+    if (!isSupabaseConfigured || !apartmentId) return
+    const resolvedApartmentId = apartmentId
+
+    async function refreshTickets() {
+      try {
+        const { tickets: nextTickets, comments: nextComments } = await listTicketsViaApi(
+          resolvedApartmentId,
+        )
+        setTickets(nextTickets)
+        setComments(nextComments)
+        nextTicketId.current = Math.max(...nextTickets.map((ticket) => ticket.id), 0) + 1
+        nextCommentId.current = Math.max(...nextComments.map((comment) => comment.id), 0) + 1
+        loadedApartmentIdRef.current = resolvedApartmentId
+      } catch (error) {
+        console.error('Failed to refresh tickets after assistant action.', error)
+      }
+    }
+
+    function handleAssistantDataChanged(event: Event) {
+      const customEvent = event as CustomEvent<{ apartmentId?: number }>
+      if (customEvent.detail?.apartmentId !== resolvedApartmentId) return
+      void refreshTickets()
+    }
+
+    window.addEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
+    return () => {
+      window.removeEventListener(ASSISTANT_DATA_CHANGED_EVENT, handleAssistantDataChanged)
     }
   }, [current?.apartment.id, setComments, setTickets])
 

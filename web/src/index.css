@@ -482,6 +482,74 @@ input {
 }
 
 @media (max-width: 640px) {
+  .modal-backdrop {
+    padding: 10px 8px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .modal-backdrop--dialog {
+    padding: 14px 8px max(14px, env(safe-area-inset-bottom));
+  }
+
+  .expense-modal,
+  .payment-modal,
+  .task-modal,
+  .shopping-modal,
+  .ticket-modal,
+  .roommate-modal,
+  .confirm-dialog {
+    width: min(100vw - 16px, 620px);
+    max-width: min(100vw - 16px, 620px);
+  }
+
+  .expense-modal,
+  .payment-modal,
+  .task-modal,
+  .shopping-modal,
+  .ticket-modal,
+  .roommate-modal {
+    max-height: min(86dvh, 720px);
+    border-radius: 22px;
+  }
+
+  .confirm-dialog {
+    border-radius: 24px;
+  }
+
+  .expense-modal__head,
+  .payment-modal__head,
+  .task-modal__head,
+  .shopping-modal__head,
+  .ticket-modal__head,
+  .roommate-modal__head,
+  .confirm-dialog__head {
+    padding-inline: 14px;
+  }
+
+  .expense-modal > .expense-form,
+  .expense-modal > .expense-detail,
+  .payment-modal > .payment-form,
+  .payment-modal > .expense-detail,
+  .task-modal > .task-form,
+  .task-modal > .expense-detail,
+  .shopping-modal > .shopping-form,
+  .shopping-modal > .expense-detail,
+  .ticket-modal > .ticket-form,
+  .ticket-modal > .expense-detail,
+  .roommate-modal > .roommate-form,
+  .confirm-dialog__body {
+    padding-inline: 14px;
+  }
+
+  .expense-form__actions,
+  .payment-form__actions,
+  .task-form__actions,
+  .shopping-form__actions,
+  .ticket-form__actions,
+  .roommate-form__actions,
+  .confirm-dialog__actions {
+    grid-template-columns: 1fr;
+  }
+
   .inline-status-menu__panel {
     min-width: 128px;
     max-width: min(160px, calc(100vw - 32px));
@@ -822,6 +890,46 @@ input {
 .btn--small {
   padding: 6px 12px;
   font-size: 0.85rem;
+}
+
+.btn__spinner,
+.auth-submit-status__spinner {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
+  animation: buttonSpinner 0.85s linear infinite;
+  flex-shrink: 0;
+}
+
+.btn__spinner {
+  color: #ffffff;
+}
+
+.auth-submit-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-radius: 16px;
+  background: rgba(46, 196, 182, 0.1);
+  color: #0f766e;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.auth-submit-status__spinner {
+  color: #0f766e;
+  border-color: rgba(15, 118, 110, 0.22);
+}
+
+@keyframes buttonSpinner {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .btn-text {
