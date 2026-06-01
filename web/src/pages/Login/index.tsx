@@ -426,6 +426,14 @@ export function LoginPage() {
     } finally {
       setIsSubmitting(false)
     }
+
+    if (result.user && result.user.apartment_id > 0) {
+      navigate(result.user.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard, {
+        replace: true,
+      })
+    } else {
+      navigate(appRoutes.onboarding, { replace: true })
+    }
   }
 
   if (user && (pendingApartmentForSession || (pendingInviteForSession && isInviteFlowActive))) {
@@ -489,12 +497,7 @@ export function LoginPage() {
       hideIntro
       footer={
         <p className="auth-card__footer-text">
-          אין לך חשבון?{' '}
-          <Link to={appRoutes.createApartment} className="link">
-            פתיחת דירה חדשה
-          </Link>
-          <span className="auth-card__footer-divider">·</span>
-          <span>או הצטרפו דרך קישור הזמנה</span>
+          אין לך חשבון? <Link to={appRoutes.register} className="link">הרשמה</Link>
         </p>
       }
     >

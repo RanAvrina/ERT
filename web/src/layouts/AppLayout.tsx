@@ -34,6 +34,14 @@ export function AppLayout() {
                 דיירים
               </NavLink>
               <NavLink
+                to={appRoutes.finance}
+                className={({ isActive }) =>
+                  `link-quiet${isActive ? ' link-quiet--active' : ''}`
+                }
+              >
+                כספים
+              </NavLink>
+              <NavLink
                 to={appRoutes.apartmentInfo}
                 className={({ isActive }) =>
                   `link-quiet${isActive ? ' link-quiet--active' : ''}`

@@ -7,7 +7,10 @@ import { ApartmentInfoPage } from './pages/ApartmentInfo'
 import { DashboardPage } from './pages/Dashboard'
 import { ExpensesPage } from './pages/Expenses'
 import { LoginPage } from './pages/Login'
+import { OnboardingPage } from './pages/Onboarding'
 import { PaymentsPage } from './pages/Payments'
+import { JoinEntryPage } from './pages/JoinEntry'
+import { FinancePage } from './pages/Finance'
 import { RegisterPage } from './pages/Register'
 import { ResetPasswordPage } from './pages/ResetPassword'
 import { RoommatesPage } from './pages/Roommates'
@@ -34,7 +37,7 @@ function RequireAuth({ children }: { children: ReactElement }) {
   const { current } = useApartment()
   if (!isAuthReady) return <AuthLoadingScreen />
   if (!user) return <Navigate to={appRoutes.login} replace />
-  if (user.apartment_id <= 0) return <Navigate to={appRoutes.login} replace />
+  if (user.apartment_id <= 0) return <Navigate to={appRoutes.onboarding} replace />
   if (user.apartment_id > 0 && current?.apartment.id !== user.apartment_id) {
     return <AuthLoadingScreen />
   }
@@ -64,7 +67,9 @@ export default function App() {
       <Route path={appRoutes.register} element={<RegisterPage />} />
       <Route path={appRoutes.resetPassword} element={<ResetPasswordPage />} />
       <Route path={appRoutes.createApartment} element={<CreateApartmentPage />} />
+      <Route path={appRoutes.join} element={<JoinEntryPage />} />
       <Route path={appRoutes.joinApartment} element={<JoinApartmentPage />} />
+      <Route path={appRoutes.onboarding} element={<OnboardingPage />} />
       <Route
         element={
           <RequireAuth>
@@ -77,6 +82,14 @@ export default function App() {
           element={
             <RoleGate>
               <DashboardPage />
+            </RoleGate>
+          }
+        />
+        <Route
+          path={appRoutes.finance}
+          element={
+            <RoleGate>
+              <FinancePage />
             </RoleGate>
           }
         />

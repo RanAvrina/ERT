@@ -35,8 +35,58 @@ export function AIAgentChat() {
   const panelRef = useRef<HTMLElement | null>(null)
   const messagesRef = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => {
-    if (!isOpen) return
+  const agentContext = useMemo(() => {
+    const scopedTasks = tasks
+      .filter((task) => task.apartment_id === apartmentId)
+      .slice(0, 12)
+      .map((task) => ({
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        dueDate: task.due_date,
+        status: task.status,
+      }))
+    const scopedExpenses = expenses
+      .filter((expense) => expense.apartment_id === apartmentId && expense.status === 'active')
+      .slice(0, 10)
+      .map((expense) => ({
+        id: expense.id,
+        description: expense.description,
+        amount: expense.amount,
+        category: expense.category,
+        date: expense.date,
+      }))
+    const scopedPayments = payments
+      .filter((payment) => payment.apartment_id === apartmentId && payment.status === 'recorded')
+      .slice(0, 8)
+      .map((payment) => ({
+        id: payment.id,
+        amount: payment.amount,
+        note: payment.note,
+        date: payment.created_at,
+      }))
+    const scopedTickets = tickets
+      .filter((ticket) => ticket.apartment_id === apartmentId)
+      .slice(0, 10)
+      .map((ticket) => ({
+        id: ticket.id,
+        title: ticket.title,
+        category: ticket.category,
+        status: ticket.status,
+        createdAt: ticket.created_at,
+      }))
+    const scopedShoppingItems = shoppingItems
+      .filter((item) => (item.apartment_id ?? apartmentId) === apartmentId)
+      .slice(0, 15)
+      .map((item) => ({
+        id: item.id,
+        name: item.item_name,
+        quantity: item.quantity,
+        category: item.category,
+        status: item.status,
+        createdAt: item.created_at,
+        purchasedAt: item.purchased_at,
+      }))
 
     const element = messagesRef.current
     if (!element) return
@@ -66,7 +116,7 @@ export function AIAgentChat() {
     const message = input.trim()
     if (!message || isSending) return
 
-    const history = messages.slice(-8)
+    const history = messages.slice(-6)
     setMessages((currentMessages) => [...currentMessages, { role: 'user', content: message }])
     setInput('')
     setError('')
@@ -74,9 +124,28 @@ export function AIAgentChat() {
     setIsSending(true)
 
     try {
-      const result = await queryAgentViaApi({ message, history })
-      if (result.pendingAction) {
-        setPendingAction(result.pendingAction)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 35000) // 35 seconds
+
+      const agentUrl = apiBaseUrl ? `${apiBaseUrl}/agent` : '/api/agent'
+      const response = await fetch(agentUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          history,
+          context: agentContext,
+        }),
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+
+      const responseText = await response.text()
+      let data: {
+        reply?: string
+        action?: unknown
+        error?: string
       }
 
       setMessages((currentMessages) => [
@@ -87,14 +156,20 @@ export function AIAgentChat() {
         },
       ])
     } catch (requestError) {
-      const messageText =
-        requestError instanceof Error ? requestError.message : 'הסוכן לא הצליח לענות כרגע.'
+      let messageText = 'הסוכן לא הצליח לענות כרגע.'
+      
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') {
+        messageText = 'זמן ההמתנה הסתיים. נסה שוב בעוד רגע.'
+      } else if (requestError instanceof Error) {
+        messageText = requestError.message
+      }
+      
       setError(messageText)
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           role: 'assistant',
-          content: 'לא הצלחתי להתחבר לסוכן כרגע. נסה שוב בעוד רגע.',
+          content: messageText,
         },
       ])
     } finally {
