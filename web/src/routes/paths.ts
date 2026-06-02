@@ -6,7 +6,6 @@ export const appRoutes = {
   joinApartment: '/invite/:apartmentId',
   onboarding: '/onboarding',
   join: '/join',
-  finance: '/finance',
   dashboard: '/',
   expenses: '/expenses',
   payments: '/payments',

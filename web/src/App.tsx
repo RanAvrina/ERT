@@ -10,7 +10,6 @@ import { LoginPage } from './pages/Login'
 import { OnboardingPage } from './pages/Onboarding'
 import { PaymentsPage } from './pages/Payments'
 import { JoinEntryPage } from './pages/JoinEntry'
-import { FinancePage } from './pages/Finance'
 import { RegisterPage } from './pages/Register'
 import { ResetPasswordPage } from './pages/ResetPassword'
 import { RoommatesPage } from './pages/Roommates'
@@ -82,14 +81,6 @@ export default function App() {
           element={
             <RoleGate>
               <DashboardPage />
-            </RoleGate>
-          }
-        />
-        <Route
-          path={appRoutes.finance}
-          element={
-            <RoleGate>
-              <FinancePage />
             </RoleGate>
           }
         />

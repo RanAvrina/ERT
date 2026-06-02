@@ -7,6 +7,7 @@ import type { Expense, ExpenseAttachment, User } from '../../types/models'
 import { openAttachment } from '../../utils/attachments'
 
 const allCategories = 'כל הקטגוריות'
+const allMonths = 'all'
 const expenseCategoryOptions = ['חשבונות', 'מזון', 'ניקיון', 'תחזוקה', 'אחר']
 
 interface ExpenseFormState {
@@ -120,18 +121,21 @@ export function ExpensesPage() {
     ),
   ).sort((first, second) => first.localeCompare(second, 'he'))
 
-  const filteredExpenses = activeExpenses.filter((expense) => {
-    const matchesMonth = getMonth(expense.date) === monthFilter
+  const scopedExpenses =
+    monthFilter === allMonths
+      ? activeExpenses
+      : activeExpenses.filter((expense) => getMonth(expense.date) === monthFilter)
+
+  const filteredExpenses = scopedExpenses.filter((expense) => {
     const matchesCategory = categoryFilter === allCategories || expense.category === categoryFilter
-    return matchesMonth && matchesCategory
+    return matchesCategory
   })
 
-  const monthlyExpenses = activeExpenses.filter((expense) => getMonth(expense.date) === monthFilter)
-  const monthlyTotal = monthlyExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
+  const monthlyTotal = scopedExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
   const filteredTotal = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
-  const averageExpense = monthlyExpenses.length > 0 ? monthlyTotal / monthlyExpenses.length : 0
+  const averageExpense = scopedExpenses.length > 0 ? monthlyTotal / scopedExpenses.length : 0
 
-  const totalsByUser = monthlyExpenses.reduce<Record<number, number>>(
+  const totalsByUser = scopedExpenses.reduce<Record<number, number>>(
     (totals, expense) => ({
       ...totals,
       [expense.paid_by]: (totals[expense.paid_by] ?? 0) + Number(expense.amount),
@@ -318,11 +322,18 @@ export function ExpensesPage() {
         </button>
       </div>
 
-      <section className="expenses-summary" aria-label="סיכום חודשי">
+      <section className="expenses-summary" aria-label="סיכום הוצאות">
         <Card className="expenses-summary__main">
-          <p className="expenses-summary__label">סה"כ הוצאות ב{monthLabel(monthFilter)}</p>
+          <p className="expenses-summary__label">
+            {monthFilter === allMonths
+              ? 'סה"כ הוצאות בכל החודשים'
+              : `סה"כ הוצאות ב${monthLabel(monthFilter)}`}
+          </p>
           <p className="expenses-summary__amount">{formatCurrency(monthlyTotal)}</p>
-          <p className="expenses-summary__hint">{monthlyExpenses.length} הוצאות פעילות בחודש הנבחר</p>
+          <p className="expenses-summary__hint">
+            {scopedExpenses.length}{' '}
+            {monthFilter === allMonths ? 'הוצאות פעילות בכלל התקופה' : 'הוצאות פעילות בחודש הנבחר'}
+          </p>
         </Card>
 
         <div className="expenses-summary__grid">
@@ -338,11 +349,12 @@ export function ExpensesPage() {
         </div>
       </section>
 
-      <Card title="סינון הוצאות">
-        <div className="expenses-filters">
+      <Card title="רשימת הוצאות">
+        <div className="expenses-filters expenses-filters--inline">
           <label className="field">
             <span className="field__label">חודש</span>
             <select className="field__input" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)}>
+              <option value={allMonths}>הכל</option>
               {monthOptions.map((month) => (
                 <option key={month} value={month}>
                   {monthLabel(month)}
@@ -363,12 +375,11 @@ export function ExpensesPage() {
             </select>
           </label>
         </div>
+
         <p className="expenses-filter-note">
           מוצגות {filteredExpenses.length} הוצאות בסכום כולל של <strong>{formatCurrency(filteredTotal)}</strong>.
         </p>
-      </Card>
 
-      <Card title="רשימת הוצאות">
         {filteredExpenses.length === 0 ? (
           <div className="expenses-empty">
             <p className="expenses-empty__title">אין הוצאות שמתאימות לסינון.</p>
@@ -410,11 +421,18 @@ export function ExpensesPage() {
 
       {isAddOpen ? (
         <div className="modal-backdrop" role="presentation">
-          <section className="expense-modal card" role="dialog" aria-modal="true" aria-labelledby="add-expense-title">
+          <section
+            className="expense-modal card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-expense-title"
+          >
             <div className="expense-modal__head">
               <div>
                 <p className="expenses-hero__eyebrow">{editingExpense ? 'עריכת הוצאה' : 'הוצאה חדשה'}</p>
-                <h2 id="add-expense-title">{editingExpense ? 'עדכון פרטי ההוצאה' : 'מה שולם בדירה?'}</h2>
+                <h2 id="add-expense-title">
+                  {editingExpense ? 'עדכון פרטי ההוצאה' : 'מה שולם בדירה?'}
+                </h2>
               </div>
               <button type="button" className="btn-text" onClick={closeAddModal}>
                 סגירה
@@ -558,7 +576,12 @@ export function ExpensesPage() {
 
       {selectedExpense ? (
         <div className="modal-backdrop" role="presentation">
-          <section className="expense-modal expense-modal--details card" role="dialog" aria-modal="true" aria-labelledby="expense-details-title">
+          <section
+            className="expense-modal expense-modal--details card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="expense-details-title"
+          >
             <div className="expense-modal__head">
               <div>
                 <p className="expenses-hero__eyebrow">פרטי הוצאה</p>
@@ -626,10 +649,18 @@ export function ExpensesPage() {
               </div>
 
               <div className="expense-form__actions">
-                <button type="button" className="btn btn--secondary" onClick={() => openEditModal(selectedExpense)}>
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={() => openEditModal(selectedExpense)}
+                >
                   עריכה
                 </button>
-                <button type="button" className="btn btn--danger" onClick={() => setExpenseToDelete(selectedExpense)}>
+                <button
+                  type="button"
+                  className="btn btn--danger"
+                  onClick={() => setExpenseToDelete(selectedExpense)}
+                >
                   מחיקה
                 </button>
               </div>
