@@ -426,14 +426,6 @@ export function LoginPage() {
     } finally {
       setIsSubmitting(false)
     }
-
-    if (result.user && result.user.apartment_id > 0) {
-      navigate(result.user.role === 'landlord' ? appRoutes.tickets : appRoutes.dashboard, {
-        replace: true,
-      })
-    } else {
-      navigate(appRoutes.onboarding, { replace: true })
-    }
   }
 
   if (user && (pendingApartmentForSession || (pendingInviteForSession && isInviteFlowActive))) {

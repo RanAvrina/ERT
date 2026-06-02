@@ -1,11 +1,13 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useApartment } from '../../context/ApartmentContext'
 import { useExpenses } from '../../context/ExpensesContext'
-import type { Expense, User } from '../../types/models'
+import type { Expense, ExpenseAttachment, User } from '../../types/models'
+import { openAttachment } from '../../utils/attachments'
 
 const allCategories = 'כל הקטגוריות'
+const expenseCategoryOptions = ['חשבונות', 'מזון', 'ניקיון', 'תחזוקה', 'אחר']
 
 interface ExpenseFormState {
   description: string
@@ -14,6 +16,15 @@ interface ExpenseFormState {
   date: string
   paidBy: string
   participantIds: number[]
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }
 
 function createInitialFormState(roommates: User[]): ExpenseFormState {
@@ -26,6 +37,17 @@ function createInitialFormState(roommates: User[]): ExpenseFormState {
     date: new Date().toISOString().slice(0, 10),
     paidBy: fallbackPayerId ? String(fallbackPayerId) : '',
     participantIds: roommates.map((user) => user.id),
+  }
+}
+
+function buildFormFromExpense(expense: Expense): ExpenseFormState {
+  return {
+    description: expense.description,
+    amount: String(Number(expense.amount)),
+    category: expense.category ?? '',
+    date: expense.date,
+    paidBy: String(expense.paid_by),
+    participantIds: [...expense.participant_ids],
   }
 }
 
@@ -61,17 +83,6 @@ function calculateShare(expense: Expense) {
   return Number(expense.amount) / participants
 }
 
-function buildFormFromExpense(expense: Expense): ExpenseFormState {
-  return {
-    description: expense.description,
-    amount: String(Number(expense.amount)),
-    category: expense.category ?? '',
-    date: expense.date,
-    paidBy: String(expense.paid_by),
-    participantIds: [...expense.participant_ids],
-  }
-}
-
 export function ExpensesPage() {
   const { current } = useApartment()
   const apartmentId = current?.apartment.id ?? 0
@@ -83,8 +94,8 @@ export function ExpensesPage() {
     () => new Map(roommates.map((roommate) => [roommate.id, roommate.name])),
     [roommates],
   )
-  const getUserName = (userId: number) => userNameById.get(userId)
   const { expenses, addExpense, updateExpense, deleteExpense } = useExpenses()
+
   const [monthFilter, setMonthFilter] = useState(new Date().toISOString().slice(0, 7))
   const [categoryFilter, setCategoryFilter] = useState(allCategories)
   const [isAddOpen, setIsAddOpen] = useState(false)
@@ -92,6 +103,7 @@ export function ExpensesPage() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null)
   const [form, setForm] = useState<ExpenseFormState>(() => createInitialFormState(roommates))
+  const [attachments, setAttachments] = useState<ExpenseAttachment[]>([])
   const [formError, setFormError] = useState('')
 
   const activeExpenses = expenses.filter(
@@ -118,6 +130,7 @@ export function ExpensesPage() {
   const monthlyTotal = monthlyExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
   const filteredTotal = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
   const averageExpense = monthlyExpenses.length > 0 ? monthlyTotal / monthlyExpenses.length : 0
+
   const totalsByUser = monthlyExpenses.reduce<Record<number, number>>(
     (totals, expense) => ({
       ...totals,
@@ -125,11 +138,16 @@ export function ExpensesPage() {
     }),
     {},
   )
+
   const [topPayerId, topPayerTotal] =
     Object.entries(totalsByUser).sort((a, b) => Number(b[1]) - Number(a[1]))[0] ?? []
-  const topPayer = topPayerId
-    ? { name: getUserName(Number(topPayerId)), total: Number(topPayerTotal) }
-    : null
+  const topPayer =
+    topPayerId && topPayerTotal
+      ? {
+          name: userNameById.get(Number(topPayerId)) ?? 'לא ידוע',
+          total: Number(topPayerTotal),
+        }
+      : null
 
   function updateForm(field: keyof ExpenseFormState, value: string | number[]) {
     setForm((currentForm) => ({ ...currentForm, [field]: value }))
@@ -149,6 +167,7 @@ export function ExpensesPage() {
   function openAddModal() {
     setEditingExpense(null)
     setForm(createInitialFormState(roommates))
+    setAttachments([])
     setFormError('')
     setIsAddOpen(true)
   }
@@ -157,6 +176,7 @@ export function ExpensesPage() {
     setSelectedExpense(null)
     setEditingExpense(expense)
     setForm(buildFormFromExpense(expense))
+    setAttachments(expense.attachments ?? [])
     setFormError('')
     setIsAddOpen(true)
   }
@@ -165,11 +185,49 @@ export function ExpensesPage() {
     setIsAddOpen(false)
     setEditingExpense(null)
     setForm(createInitialFormState(roommates))
+    setAttachments([])
     setFormError('')
+  }
+
+  async function onAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? [])
+    if (!files.length) return
+
+    try {
+      const nextAttachments = await Promise.all(
+        files.map(async (file) => ({
+          id: `${Date.now()}-${file.name}-${file.size}`,
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          size: file.size,
+          url: await readFileAsDataUrl(file),
+        })),
+      )
+
+      setAttachments((currentAttachments) => [...currentAttachments, ...nextAttachments])
+      event.target.value = ''
+    } catch {
+      setFormError('לא הצלחנו לצרף את הקבצים שנבחרו.')
+    }
+  }
+
+  function removeAttachment(attachmentId: string) {
+    setAttachments((currentAttachments) =>
+      currentAttachments.filter((attachment) => attachment.id !== attachmentId),
+    )
+  }
+
+  function handleOpenAttachment(attachment: ExpenseAttachment) {
+    try {
+      openAttachment(attachment.url, attachment.name)
+    } catch {
+      setFormError('לא הצלחנו לפתוח את הקובץ המצורף.')
+    }
   }
 
   async function confirmDeleteExpense() {
     if (!expenseToDelete) return
+
     await deleteExpense(expenseToDelete.id)
     if (selectedExpense?.id === expenseToDelete.id) setSelectedExpense(null)
     if (editingExpense?.id === expenseToDelete.id) closeAddModal()
@@ -215,6 +273,7 @@ export function ExpensesPage() {
           category: form.category.trim() || null,
           date: form.date,
           participant_ids: form.participantIds,
+          attachments,
         })
 
         if (updatedExpense) {
@@ -231,7 +290,9 @@ export function ExpensesPage() {
           category: form.category.trim() || null,
           date: form.date,
           participant_ids: form.participantIds,
+          attachments,
         })
+
         if (nextExpense) {
           setMonthFilter(getMonth(nextExpense.date))
           if (nextExpense.category) setCategoryFilter(nextExpense.category)
@@ -316,7 +377,7 @@ export function ExpensesPage() {
         ) : (
           <ul className="expense-list expense-list--cards">
             {filteredExpenses.map((expense) => {
-              const payerName = getUserName(expense.paid_by)
+              const payerName = userNameById.get(expense.paid_by)
 
               return (
                 <li key={expense.id} className="expense-list__item expense-item-card">
@@ -330,13 +391,13 @@ export function ExpensesPage() {
                       <span className="expense-list__meta">
                         {formatDate(expense.date)}
                         {expense.category ? ` · ${expense.category}` : ''}
-                        {payerName ? ` · שילם: ${payerName}` : ''}
+                        {payerName ? ` · שולם על ידי: ${payerName}` : ''}
                       </span>
                     </span>
                     <span className="expense-item-card__side">
                       <span className="expense-list__amount">{formatCurrency(expense.amount)}</span>
                       <span className="expense-item-card__share">
-                        חלק לדייר: {formatCurrency(calculateShare(expense))}
+                        חלק לכל דייר: {formatCurrency(calculateShare(expense))}
                       </span>
                     </span>
                   </button>
@@ -353,7 +414,7 @@ export function ExpensesPage() {
             <div className="expense-modal__head">
               <div>
                 <p className="expenses-hero__eyebrow">{editingExpense ? 'עריכת הוצאה' : 'הוצאה חדשה'}</p>
-                <h2 id="add-expense-title">{editingExpense ? 'עדכון פרטי הוצאה' : 'מה שולם בדירה?'}</h2>
+                <h2 id="add-expense-title">{editingExpense ? 'עדכון פרטי ההוצאה' : 'מה שולם בדירה?'}</h2>
               </div>
               <button type="button" className="btn-text" onClick={closeAddModal}>
                 סגירה
@@ -363,26 +424,48 @@ export function ExpensesPage() {
             <form className="expense-form" onSubmit={(event) => void handleAddExpense(event)} noValidate>
               <label className="field">
                 <span className="field__label">תיאור ההוצאה</span>
-                <input className="field__input" value={form.description} onChange={(event) => updateForm('description', event.target.value)} />
+                <input
+                  className="field__input"
+                  value={form.description}
+                  onChange={(event) => updateForm('description', event.target.value)}
+                />
               </label>
 
               <div className="expense-form__grid">
                 <label className="field">
                   <span className="field__label">סכום</span>
-                  <input className="field__input" type="number" min="0" step="0.01" dir="ltr" value={form.amount} onChange={(event) => updateForm('amount', event.target.value)} />
+                  <input
+                    className="field__input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    dir="ltr"
+                    value={form.amount}
+                    onChange={(event) => updateForm('amount', event.target.value)}
+                  />
                 </label>
 
                 <label className="field">
                   <span className="field__label">תאריך</span>
-                  <input className="field__input" type="date" dir="ltr" value={form.date} onChange={(event) => updateForm('date', event.target.value)} />
+                  <input
+                    className="field__input"
+                    type="date"
+                    dir="ltr"
+                    value={form.date}
+                    onChange={(event) => updateForm('date', event.target.value)}
+                  />
                 </label>
               </div>
 
               <div className="expense-form__grid">
                 <label className="field">
                   <span className="field__label">קטגוריה</span>
-                  <select className="field__input" value={form.category} onChange={(event) => updateForm('category', event.target.value)}>
-                    {['חשבונות', 'מזון', 'ניקיון', 'תחזוקה', 'אחר'].map((category) => (
+                  <select
+                    className="field__input"
+                    value={form.category}
+                    onChange={(event) => updateForm('category', event.target.value)}
+                  >
+                    {expenseCategoryOptions.map((category) => (
                       <option key={category} value={category}>
                         {category}
                       </option>
@@ -392,7 +475,11 @@ export function ExpensesPage() {
 
                 <label className="field">
                   <span className="field__label">מי שילם?</span>
-                  <select className="field__input" value={form.paidBy} onChange={(event) => updateForm('paidBy', event.target.value)}>
+                  <select
+                    className="field__input"
+                    value={form.paidBy}
+                    onChange={(event) => updateForm('paidBy', event.target.value)}
+                  >
                     {roommates.map((roommate) => (
                       <option key={roommate.id} value={roommate.id}>
                         {roommate.name}
@@ -417,6 +504,42 @@ export function ExpensesPage() {
                   ))}
                 </div>
               </fieldset>
+
+              <div className="field">
+                <span className="field__label">הוסף מסמך</span>
+                <label className="ticket-form__attachments-picker">
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    multiple
+                    onChange={(event) => void onAttachmentChange(event)}
+                  />
+                  <span>בחרו קבלה, חשבון או מסמך נוסף</span>
+                </label>
+              </div>
+
+              {attachments.length > 0 ? (
+                <div className="ticket-form__attachments">
+                  {attachments.map((attachment) => (
+                    <div key={attachment.id} className="ticket-form__attachments-item">
+                      <button
+                        type="button"
+                        className="btn-text"
+                        onClick={() => handleOpenAttachment(attachment)}
+                      >
+                        {attachment.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-text btn-text--danger"
+                        onClick={() => removeAttachment(attachment.id)}
+                      >
+                        הסר
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
               {formError ? <p className="form-message form-message--error">{formError}</p> : null}
 
@@ -460,7 +583,7 @@ export function ExpensesPage() {
                 </div>
                 <div>
                   <span>שולם על ידי</span>
-                  <strong>{getUserName(selectedExpense.paid_by) ?? 'לא ידוע'}</strong>
+                  <strong>{userNameById.get(selectedExpense.paid_by) ?? 'לא ידוע'}</strong>
                 </div>
                 <div>
                   <span>משתתפים</span>
@@ -476,9 +599,30 @@ export function ExpensesPage() {
                 <h3>דיירים שמשתתפים בהוצאה</h3>
                 <ul className="expense-detail__participants">
                   {selectedExpense.participant_ids.map((userId) => (
-                    <li key={userId}>{getUserName(userId) ?? 'דייר לא ידוע'}</li>
+                    <li key={userId}>{userNameById.get(userId) ?? 'דייר לא ידוע'}</li>
                   ))}
                 </ul>
+              </div>
+
+              <div>
+                <h3>מסמכים מצורפים</h3>
+                {selectedExpense.attachments?.length ? (
+                  <div className="ticket-form__attachments">
+                    {selectedExpense.attachments.map((attachment) => (
+                      <div key={attachment.id} className="ticket-form__attachments-item">
+                        <button
+                          type="button"
+                          className="btn-text"
+                          onClick={() => handleOpenAttachment(attachment)}
+                        >
+                          {attachment.name}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted">לא צורפו מסמכים להוצאה הזו.</p>
+                )}
               </div>
 
               <div className="expense-form__actions">

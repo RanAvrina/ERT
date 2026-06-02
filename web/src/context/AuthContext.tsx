@@ -15,7 +15,7 @@ import {
 } from '../data/repositories/authRepository'
 import {
   clearPendingInviteMetadata,
-  getCurrentAuthUser,
+  getCurrentSessionUser,
   sendPasswordResetEmail as sendSupabasePasswordResetEmail,
   signInWithPassword as signInWithSupabasePassword,
   signOutAuth,
@@ -95,6 +95,19 @@ function buildDetachedUser(account: AccountIdentity, role: User['role'] = 'tenan
     status: 'active',
     joined_at: new Date().toISOString().slice(0, 10),
   }
+}
+
+async function readBootstrapWithRetry() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await readBootstrapViaApi()
+    } catch (error) {
+      if (attempt === 2) throw error
+      await new Promise((resolve) => window.setTimeout(resolve, 200 * (attempt + 1)))
+    }
+  }
+
+  throw new Error('Failed to load bootstrap state.')
 }
 
 function readInviteMetadata(user: { user_metadata?: Record<string, unknown> } | null) {
@@ -193,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const isLatestSync = () => authSyncVersionRef.current === syncVersion
 
       try {
-        const authUser = emailFromSession ? null : await getCurrentAuthUser()
+        const authUser = emailFromSession ? null : await getCurrentSessionUser()
         const normalizedEmail = emailFromSession
           ? normalizeEmail(emailFromSession)
           : authUser?.email
@@ -208,7 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return null
         }
 
-        let snapshot = await readBootstrapViaApi()
+        let snapshot = await readBootstrapWithRetry()
         let account =
           snapshot.account &&
           normalizeEmail(snapshot.account.email) === normalizedEmail
@@ -241,7 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             if (joinResult.ok) {
               await clearPendingInviteMetadata().catch(() => undefined)
-              snapshot = await readBootstrapViaApi()
+              snapshot = await readBootstrapWithRetry()
               account =
                 snapshot.account &&
                 normalizeEmail(snapshot.account.email) === normalizedEmail

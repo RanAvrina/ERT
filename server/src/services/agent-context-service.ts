@@ -1,5 +1,6 @@
 import { listExpensesByApartmentId, listPaymentsByApartmentId } from './finance-service.js'
 import { listHomeItemsByApartmentId } from './home-item-service.js'
+import { listApartmentInfoItemsByApartmentId } from './apartment-info-service.js'
 import { getApartmentStateSnapshot } from './apartment-service.js'
 import { listShoppingItemsByApartmentId } from './shopping-service.js'
 import { listTasksByApartmentId } from './task-service.js'
@@ -84,7 +85,7 @@ function calculateBalances(
 }
 
 export async function buildAgentContext(apartmentId: number, currentAccountId: number) {
-  const [state, tasks, expenses, payments, shoppingItems, tickets, homeItems] = await Promise.all([
+  const [state, tasks, expenses, payments, shoppingItems, tickets, homeItems, apartmentInfoItems] = await Promise.all([
     getApartmentStateSnapshot(apartmentId),
     listTasksByApartmentId(apartmentId),
     listExpensesByApartmentId(apartmentId),
@@ -92,6 +93,7 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
     listShoppingItemsByApartmentId(apartmentId),
     listTicketsByApartmentId(apartmentId),
     listHomeItemsByApartmentId(apartmentId),
+    listApartmentInfoItemsByApartmentId(apartmentId),
   ])
 
   const activeUsers = state.users.filter((user) => user.status === 'active')
@@ -184,6 +186,16 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
       area: item.area,
       name: item.name,
       defaultNote: item.defaultNote,
+    })),
+    apartmentInfoItems: apartmentInfoItems.map((item) => ({
+      id: item.id,
+      title: item.title,
+      categoryLabel: item.categoryLabel,
+      provider: item.provider,
+      meterNumber: item.meterNumber,
+      accountNumber: item.accountNumber,
+      phone: item.phone,
+      notes: item.notes,
     })),
     balanceSummary: {
       currentUserNetBalance: currentUser ? netBalanceByUser[currentUser.id] ?? 0 : 0,

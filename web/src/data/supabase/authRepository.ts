@@ -108,6 +108,13 @@ export async function getCurrentAuthUser() {
   return (data.user as User | null) ?? null
 }
 
+export async function getCurrentSessionUser() {
+  const client = ensureValue(supabase, 'Supabase client is not configured.')
+  const { data, error } = await client.auth.getSession()
+  if (error) throw new Error(error.message)
+  return (data.session?.user as User | null) ?? null
+}
+
 export async function getCurrentAccessToken() {
   const client = ensureValue(supabase, 'Supabase client is not configured.')
   const { data, error } = await client.auth.getSession()

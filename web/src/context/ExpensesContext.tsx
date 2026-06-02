@@ -24,7 +24,7 @@ import {
 } from '../data/server/financeApi'
 import { isSupabaseConfigured } from '../lib/supabase/env'
 import { useApartment } from './ApartmentContext'
-import type { Expense, Payment } from '../types/models'
+import type { Expense, ExpenseAttachment, Payment } from '../types/models'
 
 const ASSISTANT_DATA_CHANGED_EVENT = 'assistant:data-changed'
 
@@ -36,6 +36,7 @@ interface NewExpenseInput {
   category: string | null
   date: string
   participant_ids: number[]
+  attachments?: ExpenseAttachment[]
 }
 
 interface UpdateExpenseInput {
@@ -45,6 +46,7 @@ interface UpdateExpenseInput {
   category: string | null
   date: string
   participant_ids: number[]
+  attachments?: ExpenseAttachment[]
 }
 
 interface NewPaymentInput {
@@ -236,6 +238,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
         const optimisticExpense: Expense = {
           id: nextTempExpenseId.current,
           status: 'active',
+          attachments: expense.attachments ?? [],
           ...expense,
         }
         nextTempExpenseId.current -= 1
@@ -250,6 +253,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           category: expense.category,
           date: expense.date,
           participantAccountIds: expense.participant_ids,
+          attachments: expense.attachments,
         })
           .then((nextExpense) => {
             if (!nextExpense) {
@@ -278,6 +282,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
       const nextExpense: Expense = {
         id: nextExpenseId.current,
         status: 'active',
+        attachments: expense.attachments ?? [],
         ...expense,
       }
       nextExpenseId.current += 1
@@ -412,6 +417,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
         const optimisticExpense: Expense = {
           ...previousExpense,
           ...expense,
+          attachments: expense.attachments ?? previousExpense.attachments,
         }
 
         setExpenses((currentExpenses) =>
@@ -428,6 +434,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
           category: expense.category,
           date: expense.date,
           participantAccountIds: expense.participant_ids,
+          attachments: expense.attachments,
         })
           .then((updatedExpense) => {
             if (!updatedExpense) {
