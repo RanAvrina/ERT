@@ -257,6 +257,115 @@ function findRoommateByName(message: string, context: AgentContext) {
   )
 }
 
+function findMentionedRoommates(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  return context.roommates.filter((roommate) =>
+    normalizedMessage.includes(normalizeText(roommate.name)),
+  )
+}
+
+function messageSuggestsSpecificExpenseSplit(message: string) {
+  const normalizedMessage = normalizeText(message)
+  return [
+    'ביני לבין',
+    'בינינו',
+    'אני ו',
+    'אני עם',
+    'יחד עם',
+    'רק אני',
+    'רק אנחנו',
+    'מתחלק',
+    'מתחלקים',
+    'מחולק',
+    'מחולקת',
+  ].some((term) => normalizedMessage.includes(term))
+}
+
+function validateExpenseParticipantsAgainstMessage(
+  message: string,
+  context: AgentContext,
+  action: ReturnType<typeof validateAgentAction>,
+) {
+  if (!action || action.type !== 'create_expense' || !context.user) {
+    return null
+  }
+
+  if (!messageSuggestsSpecificExpenseSplit(message)) {
+    return null
+  }
+
+  const mentionedRoommates = findMentionedRoommates(message, context)
+  if (!mentionedRoommates.length) {
+    return null
+  }
+
+  const requestedNames = [context.user.name, ...mentionedRoommates.map((roommate) => roommate.name)]
+  const normalizedRequestedNames = requestedNames.map((name) => normalizeText(name))
+  const actionNames = action.payload.participantNames?.map((name) => normalizeText(name)) ?? []
+
+  if (!action.payload.participantNames?.length) {
+    return `כדי לא לטעות בחלוקת ההוצאה, לאשר שההוצאה מתחלקת רק בין ${requestedNames.join(' ו')}?`
+  }
+
+  const allRequestedNamesIncluded = normalizedRequestedNames.every((name) =>
+    actionNames.includes(name),
+  )
+  const hasUnexpectedParticipants = actionNames.some(
+    (name) => !normalizedRequestedNames.includes(name),
+  )
+
+  if (!allRequestedNamesIncluded || hasUnexpectedParticipants) {
+    return `רק לוודא לפני שאני יוצר את ההוצאה: המשתתפים בהוצאה הם ${requestedNames.join(' ו')} בלבד?`
+  }
+
+  return null
+}
+
+function buildActionConfirmationReply(action: ReturnType<typeof validateAgentAction>) {
+  if (!action) return ''
+
+  switch (action.type) {
+    case 'create_expense': {
+      const participants =
+        action.payload.participantNames?.length
+          ? `, ומתחלקת בין ${action.payload.participantNames.join(' ו')}`
+          : ''
+      return `זיהיתי בקשה להוסיף הוצאה על ${action.payload.description} בסך ${formatCurrency(action.payload.amount)}${participants}. לאשר?`
+    }
+    case 'create_shopping_item':
+      return `זיהיתי בקשה להוסיף את "${action.payload.itemName}" לרשימת הקניות. לאשר?`
+    case 'create_task': {
+      const title = action.payload.title?.trim() || action.payload.targetItemName?.trim() || 'מטלה חדשה'
+      return `זיהיתי בקשה לפתוח מטלה: ${title}. לאשר?`
+    }
+    case 'create_ticket':
+      return `זיהיתי בקשה לפתוח פנייה חדשה: ${action.payload.title}. לאשר?`
+    case 'update_task_due_date':
+      return `זיהיתי בקשה לעדכן תאריך יעד למטלה. לאשר?`
+    case 'update_task_status':
+      return `זיהיתי בקשה לעדכן סטטוס למטלה. לאשר?`
+  }
+}
+
+function shouldReplaceReplyWithActionConfirmation(
+  replyText: string,
+  action: ReturnType<typeof validateAgentAction>,
+) {
+  if (!action) return false
+
+  const normalizedReply = normalizeText(replyText)
+  if (!normalizedReply) return true
+  if (normalizedReply.length < 20) return true
+
+  if (action.type === 'create_expense') {
+    const normalizedDescription = normalizeText(action.payload.description)
+    if (normalizedReply === normalizedDescription) return true
+    if (!normalizedReply.includes('לאשר') && !normalizedReply.includes('האם')) return true
+  }
+
+  return false
+}
+
 function formatSettlementsList(
   settlements: AgentContext['balanceSummary']['settlements'],
   currentUserId: number,
@@ -806,6 +915,21 @@ function getDeterministicExpenseSummaryReply(message: string, context: AgentCont
   return `בחודש ${month.label} שילמתם על ${topic.label} בסך הכול ${formatCurrency(totalAmount)}.\n${details}`
 }
 
+function getDeterministicTodayReply(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  const asksForToday =
+    normalizedMessage.includes('מה התאריך היום') ||
+    normalizedMessage.includes('איזה תאריך היום') ||
+    normalizedMessage === 'מה היום' ||
+    normalizedMessage.includes('מה היום היום')
+
+  if (!asksForToday) {
+    return null
+  }
+
+  return `התאריך היום הוא ${formatDate(context.today)}.`
+}
+
 agentRouter.use(
   createRateLimit({
     windowMs: env.RATE_LIMIT_WINDOW_MS,
@@ -829,6 +953,7 @@ agentRouter.post('/', async (request, response, next) => {
     const deterministicOperationsReply = getDeterministicOperationsReply(body.message, context)
     const deterministicApartmentInfoReply = getDeterministicApartmentInfoReply(body.message, context)
     const deterministicExpenseSummaryReply = getDeterministicExpenseSummaryReply(body.message, context)
+    const deterministicTodayReply = getDeterministicTodayReply(body.message, context)
     const pendingFollowUp = getPendingAgentFollowUp(accountId, apartmentId)
 
     if (deterministicDebtReply) {
@@ -867,6 +992,15 @@ agentRouter.post('/', async (request, response, next) => {
       return
     }
 
+    if (deterministicTodayReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicTodayReply,
+        pendingAction: null,
+      })
+      return
+    }
+
     const client = new OpenAI({ apiKey: env.OPENAI_API_KEY })
     const history = (body.history ?? [])
       .slice(-4)
@@ -892,9 +1026,14 @@ agentRouter.post('/', async (request, response, next) => {
         'create_task {title, taskType, targetItemName, description, assigneeName, dueDate}; ' +
         'update_task_due_date {taskId, taskTitle, dueDate}; ' +
         'update_task_status {taskId, taskTitle, status}; ' +
-        'create_expense {description, amount, category, date, paidByName}; ' +
+        'create_expense {description, amount, category, date, paidByName, participantNames}; ' +
         'create_shopping_item {itemName, quantity, category}; ' +
         'create_ticket {title, description, category}. ' +
+        'When the user specifies who shares an expense, include those roommate names in create_expense.participantNames. ' +
+        'If the user says the expense is split equally only between specific people, do not include other roommates. ' +
+        'If the user phrasing is ambiguous, contains a typo, or you are not fully sure who participates in an expense, ask a short clarification question and do not create an action yet. ' +
+        'Never guess participantNames for an expense when the message may imply only a subset of roommates. ' +
+        'Examples: "אני ויוני", "ביני לבין יוני", "רק אני ויוני", "אני, יוני ודוד" should map to exactly those participants. ' +
         'Allowed status values: open, in_progress, done, cancelled. ' +
         'Allowed taskType values: cleaning, maintenance, shopping, inspection, other. ' +
         'Allowed ticket categories: issue, request, finance, other. ' +
@@ -917,6 +1056,26 @@ agentRouter.post('/', async (request, response, next) => {
 
     const agentOutput = parseAgentOutput(aiResponse.output_text)
     const validatedAction = agentOutput.action ? validateAgentAction(agentOutput.action) : null
+    const expenseParticipantsClarification = validateExpenseParticipantsAgainstMessage(
+      body.message,
+      context,
+      validatedAction,
+    )
+
+    if (expenseParticipantsClarification) {
+      storePendingAgentFollowUp({
+        accountId,
+        apartmentId,
+        originalMessage: pendingFollowUp?.originalMessage ?? body.message,
+        latestAssistantQuestion: expenseParticipantsClarification,
+      })
+      response.json({
+        reply: expenseParticipantsClarification,
+        pendingAction: null,
+      })
+      return
+    }
+
     const pendingAction = validatedAction
       ? createPendingAgentAction({
           accountId,
@@ -924,7 +1083,13 @@ agentRouter.post('/', async (request, response, next) => {
           action: validatedAction,
         })
       : null
-    const replyText = agentOutput.reply || aiResponse.output_text
+    const rawReplyText =
+      agentOutput.reply ||
+      aiResponse.output_text ||
+      (pendingAction ? `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?` : '')
+    const replyText = shouldReplaceReplyWithActionConfirmation(rawReplyText, validatedAction)
+      ? buildActionConfirmationReply(validatedAction)
+      : rawReplyText
 
     if (pendingAction) {
       clearPendingAgentFollowUp(accountId, apartmentId)

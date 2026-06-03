@@ -61,6 +61,7 @@ const createExpenseActionSchema = z.object({
     category: z.string().trim().optional().nullable(),
     date: z.string().trim().optional().nullable(),
     paidByName: z.string().trim().optional().nullable(),
+    participantNames: z.array(z.string().trim().min(1)).optional().nullable(),
   }),
 })
 
@@ -114,7 +115,7 @@ function cleanupExpiredPendingActions() {
 }
 
 function normalizeAgentActionValue(value: unknown) {
-  if (!value || typeof value !== 'object') return null
+  if (!value || typeof value !== "object") return null
 
   const candidate = value as { type?: unknown; payload?: unknown }
   if (typeof candidate.type === 'string') {
@@ -147,7 +148,11 @@ function buildPendingActionSummary(action: AgentAction) {
     case 'update_task_status':
       return `עדכון סטטוס למטלה: ${action.payload.taskTitle ?? `#${action.payload.taskId}`}`
     case 'create_expense':
-      return `הוספת הוצאה: ${action.payload.description}`
+      return `הוספת הוצאה: ${action.payload.description}${
+        action.payload.participantNames?.length
+          ? ` (${action.payload.participantNames.join(', ')})`
+          : ''
+      }`
     case 'create_shopping_item':
       return `הוספת פריט קנייה: ${action.payload.itemName}`
     case 'create_ticket':
@@ -155,9 +160,13 @@ function buildPendingActionSummary(action: AgentAction) {
   }
 }
 
-async function findAccountIdByName(apartmentId: number, requestedName?: string | null) {
+async function getActiveUsers(apartmentId: number) {
   const state = await getApartmentStateSnapshot(apartmentId)
-  const activeUsers = state.users.filter((user) => user.status === 'active')
+  return state.users.filter((user) => user.status === 'active')
+}
+
+async function findAccountIdByName(apartmentId: number, requestedName?: string | null) {
+  const activeUsers = await getActiveUsers(apartmentId)
   const normalizedName = requestedName?.trim()
   if (!normalizedName) return null
 
@@ -171,6 +180,43 @@ async function findAccountIdByName(apartmentId: number, requestedName?: string |
   }
 
   throw new ApiError(404, `לא נמצא דייר בשם "${normalizedName}".`)
+}
+
+async function resolveParticipantAccountIds(
+  apartmentId: number,
+  requestedNames: string[] | null | undefined,
+) {
+  const activeUsers = await getActiveUsers(apartmentId)
+
+  if (!requestedNames?.length) {
+    return activeUsers.map((user) => user.id)
+  }
+
+  const participantIds = new Set<number>()
+
+  for (const rawName of requestedNames) {
+    const normalizedName = rawName.trim()
+    if (!normalizedName) continue
+
+    const exactMatch = activeUsers.find((user) => user.name === normalizedName)
+    if (exactMatch) {
+      participantIds.add(exactMatch.id)
+      continue
+    }
+
+    const partialMatches = activeUsers.filter((user) => user.name.includes(normalizedName))
+    if (partialMatches.length === 1) {
+      participantIds.add(partialMatches[0].id)
+      continue
+    }
+    if (partialMatches.length > 1) {
+      throw new ApiError(409, `יש יותר מדייר אחד שמתאים לשם "${normalizedName}".`)
+    }
+
+    throw new ApiError(404, `לא נמצא דייר בשם "${normalizedName}".`)
+  }
+
+  return participantIds.size ? [...participantIds] : activeUsers.map((user) => user.id)
 }
 
 async function findTaskForAction(apartmentId: number, taskId?: number, taskTitle?: string) {
@@ -261,6 +307,7 @@ export async function confirmPendingAgentAction(input: {
       message = `נפתחה מטלה חדשה: ${task.title}.`
       break
     }
+
     case 'update_task_due_date': {
       const task = await findTaskForAction(
         input.apartmentId,
@@ -279,6 +326,7 @@ export async function confirmPendingAgentAction(input: {
       message = `תאריך היעד של "${task.title}" עודכן.`
       break
     }
+
     case 'update_task_status': {
       const task = await findTaskForAction(
         input.apartmentId,
@@ -297,14 +345,15 @@ export async function confirmPendingAgentAction(input: {
       message = `הסטטוס של "${task.title}" עודכן.`
       break
     }
+
     case 'create_expense': {
       const paidByAccountId =
         (await findAccountIdByName(input.apartmentId, action.payload.paidByName ?? null)) ??
         input.accountId
-      const state = await getApartmentStateSnapshot(input.apartmentId)
-      const participantAccountIds = state.users
-        .filter((user) => user.status === 'active')
-        .map((user) => user.id)
+      const participantAccountIds = await resolveParticipantAccountIds(
+        input.apartmentId,
+        action.payload.participantNames,
+      )
       await createExpense({
         apartmentId: input.apartmentId,
         paidByAccountId,
@@ -317,6 +366,7 @@ export async function confirmPendingAgentAction(input: {
       message = 'ההוצאה נוספה בהצלחה.'
       break
     }
+
     case 'create_shopping_item': {
       await createShoppingItem({
         apartmentId: input.apartmentId,
@@ -329,6 +379,7 @@ export async function confirmPendingAgentAction(input: {
       message = `"${action.payload.itemName.trim()}" נוסף לרשימת הקניות.`
       break
     }
+
     case 'create_ticket': {
       await createTicket({
         apartmentId: input.apartmentId,
