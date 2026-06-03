@@ -3,7 +3,11 @@ import { z } from 'zod'
 import { ApiError } from '../lib/api-error.js'
 import { getApartmentStateSnapshot } from './apartment-service.js'
 import { createExpense } from './finance-service.js'
-import { createShoppingItem } from './shopping-service.js'
+import {
+  createShoppingItem,
+  listShoppingItemsByApartmentId,
+  updateShoppingItem,
+} from './shopping-service.js'
 import { createTask, listTasksByApartmentId, updateTask } from './task-service.js'
 import { createTicket } from './ticket-service.js'
 
@@ -74,6 +78,14 @@ const createShoppingItemActionSchema = z.object({
   }),
 })
 
+const cancelShoppingItemsActionSchema = z.object({
+  type: z.literal('cancel_shopping_items'),
+  payload: z.object({
+    itemName: z.string().trim().min(1),
+    mode: z.enum(['single_latest', 'all_matching']).optional().default('single_latest'),
+  }),
+})
+
 const createTicketActionSchema = z.object({
   type: z.literal('create_ticket'),
   payload: z.object({
@@ -89,6 +101,7 @@ const agentActionSchema = z.discriminatedUnion('type', [
   updateTaskStatusActionSchema,
   createExpenseActionSchema,
   createShoppingItemActionSchema,
+  cancelShoppingItemsActionSchema,
   createTicketActionSchema,
 ])
 
@@ -115,7 +128,7 @@ function cleanupExpiredPendingActions() {
 }
 
 function normalizeAgentActionValue(value: unknown) {
-  if (!value || typeof value !== "object") return null
+  if (!value || typeof value !== 'object') return null
 
   const candidate = value as { type?: unknown; payload?: unknown }
   if (typeof candidate.type === 'string') {
@@ -154,7 +167,11 @@ function buildPendingActionSummary(action: AgentAction) {
           : ''
       }`
     case 'create_shopping_item':
-      return `הוספת פריט קנייה: ${action.payload.itemName}`
+      return `הוספת פריט קניות: ${action.payload.itemName}`
+    case 'cancel_shopping_items':
+      return action.payload.mode === 'all_matching'
+        ? `ביטול כל פריטי הקנייה של ${action.payload.itemName}`
+        : `ביטול פריט הקנייה ${action.payload.itemName}`
     case 'create_ticket':
       return `פתיחת פנייה: ${action.payload.title}`
   }
@@ -243,10 +260,31 @@ async function findTaskForAction(apartmentId: number, taskId?: number, taskTitle
   return partialMatches[0]
 }
 
+async function findShoppingItemsForAction(
+  apartmentId: number,
+  itemName: string,
+  mode: 'single_latest' | 'all_matching',
+) {
+  const normalizedName = itemName.trim()
+  if (!normalizedName) {
+    throw new ApiError(400, 'חסר שם פריט לביטול.')
+  }
+
+  const shoppingItems = await listShoppingItemsByApartmentId(apartmentId)
+  const matchingItems = shoppingItems.filter((item) => item.itemName.includes(normalizedName))
+
+  if (!matchingItems.length) {
+    throw new ApiError(404, `לא נמצא פריט קנייה בשם "${normalizedName}".`)
+  }
+
+  return mode === 'all_matching' ? matchingItems : [matchingItems[0]]
+}
+
 export function validateAgentAction(value: unknown) {
   const normalizedValue = normalizeAgentActionValue(value)
   if (!normalizedValue) return null
-  return agentActionSchema.parse(normalizedValue)
+  const result = agentActionSchema.safeParse(normalizedValue)
+  return result.success ? result.data : null
 }
 
 export function createPendingAgentAction(input: {
@@ -377,6 +415,34 @@ export async function confirmPendingAgentAction(input: {
         status: 'open',
       })
       message = `"${action.payload.itemName.trim()}" נוסף לרשימת הקניות.`
+      break
+    }
+
+    case 'cancel_shopping_items': {
+      const matchingItems = await findShoppingItemsForAction(
+        input.apartmentId,
+        action.payload.itemName,
+        action.payload.mode ?? 'single_latest',
+      )
+
+      for (const item of matchingItems) {
+        await updateShoppingItem({
+          apartmentId: input.apartmentId,
+          itemId: item.id,
+          actorAccountId: input.accountId,
+          itemName: item.itemName,
+          quantity: item.quantity,
+          category: item.category,
+          status: 'cancelled',
+          purchasedByAccountId: null,
+          purchasedAt: null,
+        })
+      }
+
+      message =
+        matchingItems.length === 1
+          ? `פריט הקנייה "${matchingItems[0].itemName}" בוטל.`
+          : `${matchingItems.length} פריטי קנייה של "${action.payload.itemName.trim()}" בוטלו.`
       break
     }
 

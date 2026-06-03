@@ -244,6 +244,35 @@ function looksLikeClarifyingQuestion(reply: string) {
   ].some((prefix) => normalizedReply.startsWith(prefix))
 }
 
+function looksLikeAffirmation(message: string) {
+  const normalizedMessage = normalizeText(message)
+  return [
+    'כן',
+    'כן.',
+    'כן!',
+    'מאשר',
+    'מאשרת',
+    'תאשר',
+    'אפשר',
+    'סבבה',
+    'אוקי',
+    'אוקיי',
+    'יאללה',
+  ].includes(normalizedMessage)
+}
+
+function looksLikeRejection(message: string) {
+  const normalizedMessage = normalizeText(message)
+  return [
+    'לא',
+    'לא.',
+    'לא תודה',
+    'בטל',
+    'ביטול',
+    'עזוב',
+  ].includes(normalizedMessage)
+}
+
 function findRoommateByName(message: string, context: AgentContext) {
   const normalizedMessage = normalizeText(message)
   const roommatesByLength = [...context.roommates].sort(
@@ -255,115 +284,6 @@ function findRoommateByName(message: string, context: AgentContext) {
       normalizedMessage.includes(normalizeText(roommate.name)),
     ) ?? null
   )
-}
-
-function findMentionedRoommates(message: string, context: AgentContext) {
-  const normalizedMessage = normalizeText(message)
-  return context.roommates.filter((roommate) =>
-    normalizedMessage.includes(normalizeText(roommate.name)),
-  )
-}
-
-function messageSuggestsSpecificExpenseSplit(message: string) {
-  const normalizedMessage = normalizeText(message)
-  return [
-    'ביני לבין',
-    'בינינו',
-    'אני ו',
-    'אני עם',
-    'יחד עם',
-    'רק אני',
-    'רק אנחנו',
-    'מתחלק',
-    'מתחלקים',
-    'מחולק',
-    'מחולקת',
-  ].some((term) => normalizedMessage.includes(term))
-}
-
-function validateExpenseParticipantsAgainstMessage(
-  message: string,
-  context: AgentContext,
-  action: ReturnType<typeof validateAgentAction>,
-) {
-  if (!action || action.type !== 'create_expense' || !context.user) {
-    return null
-  }
-
-  if (!messageSuggestsSpecificExpenseSplit(message)) {
-    return null
-  }
-
-  const mentionedRoommates = findMentionedRoommates(message, context)
-  if (!mentionedRoommates.length) {
-    return null
-  }
-
-  const requestedNames = [context.user.name, ...mentionedRoommates.map((roommate) => roommate.name)]
-  const normalizedRequestedNames = requestedNames.map((name) => normalizeText(name))
-  const actionNames = action.payload.participantNames?.map((name) => normalizeText(name)) ?? []
-
-  if (!action.payload.participantNames?.length) {
-    return `כדי לא לטעות בחלוקת ההוצאה, לאשר שההוצאה מתחלקת רק בין ${requestedNames.join(' ו')}?`
-  }
-
-  const allRequestedNamesIncluded = normalizedRequestedNames.every((name) =>
-    actionNames.includes(name),
-  )
-  const hasUnexpectedParticipants = actionNames.some(
-    (name) => !normalizedRequestedNames.includes(name),
-  )
-
-  if (!allRequestedNamesIncluded || hasUnexpectedParticipants) {
-    return `רק לוודא לפני שאני יוצר את ההוצאה: המשתתפים בהוצאה הם ${requestedNames.join(' ו')} בלבד?`
-  }
-
-  return null
-}
-
-function buildActionConfirmationReply(action: ReturnType<typeof validateAgentAction>) {
-  if (!action) return ''
-
-  switch (action.type) {
-    case 'create_expense': {
-      const participants =
-        action.payload.participantNames?.length
-          ? `, ומתחלקת בין ${action.payload.participantNames.join(' ו')}`
-          : ''
-      return `זיהיתי בקשה להוסיף הוצאה על ${action.payload.description} בסך ${formatCurrency(action.payload.amount)}${participants}. לאשר?`
-    }
-    case 'create_shopping_item':
-      return `זיהיתי בקשה להוסיף את "${action.payload.itemName}" לרשימת הקניות. לאשר?`
-    case 'create_task': {
-      const title = action.payload.title?.trim() || action.payload.targetItemName?.trim() || 'מטלה חדשה'
-      return `זיהיתי בקשה לפתוח מטלה: ${title}. לאשר?`
-    }
-    case 'create_ticket':
-      return `זיהיתי בקשה לפתוח פנייה חדשה: ${action.payload.title}. לאשר?`
-    case 'update_task_due_date':
-      return `זיהיתי בקשה לעדכן תאריך יעד למטלה. לאשר?`
-    case 'update_task_status':
-      return `זיהיתי בקשה לעדכן סטטוס למטלה. לאשר?`
-  }
-}
-
-function shouldReplaceReplyWithActionConfirmation(
-  replyText: string,
-  action: ReturnType<typeof validateAgentAction>,
-) {
-  if (!action) return false
-
-  const normalizedReply = normalizeText(replyText)
-  if (!normalizedReply) return true
-  if (normalizedReply.length < 20) return true
-
-  if (action.type === 'create_expense') {
-    const normalizedDescription = normalizeText(action.payload.description)
-    if (normalizedReply === normalizedDescription) return true
-    if (!normalizedReply.includes('לאשר') && !normalizedReply.includes('האם')) return true
-  }
-
-  return false
 }
 
 function formatSettlementsList(
@@ -1003,7 +923,7 @@ agentRouter.post('/', async (request, response, next) => {
 
     const client = new OpenAI({ apiKey: env.OPENAI_API_KEY })
     const history = (body.history ?? [])
-      .slice(-4)
+      .slice(-8)
       .map((item) => `${item.role === 'user' ? 'User' : 'Assistant'}: ${item.content}`)
       .join('\n')
     const openAIContext = buildScopedOpenAIContext(
@@ -1014,13 +934,17 @@ agentRouter.post('/', async (request, response, next) => {
 
     const aiResponse = await client.responses.create({
       model: env.OPENAI_MODEL,
-      max_output_tokens: 220,
+      max_output_tokens: 420,
       instructions:
         'You are an AI assistant inside the ERT shared apartment app. Respond in short, natural Hebrew. ' +
         'Use only the site context provided to you as the source of truth. ' +
         'Do not claim that you already performed a change in the app. ' +
         'When the user asks to change data in the app, return a structured action for confirmation. ' +
         'If there is a pending clarification context, treat the latest user message as a continuation of the original request unless the new message is clearly unrelated. ' +
+        'If the latest user message is only an approval such as "כן" to a previous proposal, return the structured action now instead of a conversational reply. ' +
+        'Act like a helpful apartment assistant, not like a form validator. ' +
+        'Understand natural phrasing, small typos, and imperfect Hebrew when the user intent is still reasonably clear. ' +
+        'If the intent is clear, help the user naturally. Ask a clarification question only when there is real ambiguity that could materially change the action or answer. ' +
         'Always return valid JSON only in this format: {"reply":"text for the user","action":null or object}. ' +
         'Allowed actions: ' +
         'create_task {title, taskType, targetItemName, description, assigneeName, dueDate}; ' +
@@ -1028,11 +952,12 @@ agentRouter.post('/', async (request, response, next) => {
         'update_task_status {taskId, taskTitle, status}; ' +
         'create_expense {description, amount, category, date, paidByName, participantNames}; ' +
         'create_shopping_item {itemName, quantity, category}; ' +
+        'cancel_shopping_items {itemName, mode}; ' +
         'create_ticket {title, description, category}. ' +
+        'Use cancel_shopping_items when the user asks to remove, cancel, delete, or clear shopping items from the shopping list. ' +
+        'For "תבטל הכל" or "תמחק את כל..." return mode "all_matching". For a single item return mode "single_latest". ' +
         'When the user specifies who shares an expense, include those roommate names in create_expense.participantNames. ' +
         'If the user says the expense is split equally only between specific people, do not include other roommates. ' +
-        'If the user phrasing is ambiguous, contains a typo, or you are not fully sure who participates in an expense, ask a short clarification question and do not create an action yet. ' +
-        'Never guess participantNames for an expense when the message may imply only a subset of roommates. ' +
         'Examples: "אני ויוני", "ביני לבין יוני", "רק אני ויוני", "אני, יוני ודוד" should map to exactly those participants. ' +
         'Allowed status values: open, in_progress, done, cancelled. ' +
         'Allowed taskType values: cleaning, maintenance, shopping, inspection, other. ' +
@@ -1045,7 +970,13 @@ agentRouter.post('/', async (request, response, next) => {
       input: [
         `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
         pendingFollowUp
-          ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${body.message}`
+          ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${body.message}\nUser continuation type: ${
+              looksLikeAffirmation(body.message)
+                ? 'affirmative confirmation'
+                : looksLikeRejection(body.message)
+                  ? 'rejection'
+                  : 'additional information'
+            }`
           : '',
         history ? `Conversation history:\n${history}` : '',
         `User message: ${body.message}`,
@@ -1054,26 +985,43 @@ agentRouter.post('/', async (request, response, next) => {
         .join('\n\n'),
     })
 
-    const agentOutput = parseAgentOutput(aiResponse.output_text)
-    const validatedAction = agentOutput.action ? validateAgentAction(agentOutput.action) : null
-    const expenseParticipantsClarification = validateExpenseParticipantsAgainstMessage(
-      body.message,
-      context,
-      validatedAction,
-    )
+    let agentOutput = parseAgentOutput(aiResponse.output_text)
+    let validatedAction = agentOutput.action ? validateAgentAction(agentOutput.action) : null
 
-    if (expenseParticipantsClarification) {
-      storePendingAgentFollowUp({
-        accountId,
-        apartmentId,
-        originalMessage: pendingFollowUp?.originalMessage ?? body.message,
-        latestAssistantQuestion: expenseParticipantsClarification,
+    if (pendingFollowUp && looksLikeAffirmation(body.message) && !validatedAction) {
+      const confirmationResponse = await client.responses.create({
+        model: env.OPENAI_MODEL,
+        max_output_tokens: 220,
+        instructions:
+          'The user confirmed a previously proposed action inside the ERT shared apartment app. ' +
+          'Return valid JSON only in this format: {"reply":"short Hebrew confirmation","action":object}. ' +
+          'Do not return action null unless the original request is still truly ambiguous. ' +
+          'If the original request was to change data in the app and the user answered "כן", return the structured action now. ' +
+          'Allowed actions: ' +
+          'create_task {title, taskType, targetItemName, description, assigneeName, dueDate}; ' +
+          'update_task_due_date {taskId, taskTitle, dueDate}; ' +
+          'update_task_status {taskId, taskTitle, status}; ' +
+          'create_expense {description, amount, category, date, paidByName, participantNames}; ' +
+          'create_shopping_item {itemName, quantity, category}; ' +
+          'cancel_shopping_items {itemName, mode}; ' +
+          'create_ticket {title, description, category}.',
+        input: [
+          `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
+          `Original user request: ${pendingFollowUp.originalMessage}`,
+          `Assistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}`,
+          `User confirmation: ${body.message}`,
+        ].join('\n\n'),
       })
-      response.json({
-        reply: expenseParticipantsClarification,
-        pendingAction: null,
-      })
-      return
+
+      const confirmationOutput = parseAgentOutput(confirmationResponse.output_text)
+      const confirmationAction = confirmationOutput.action
+        ? validateAgentAction(confirmationOutput.action)
+        : null
+
+      if (confirmationAction) {
+        agentOutput = confirmationOutput
+        validatedAction = confirmationAction
+      }
     }
 
     const pendingAction = validatedAction
@@ -1087,25 +1035,27 @@ agentRouter.post('/', async (request, response, next) => {
       agentOutput.reply ||
       aiResponse.output_text ||
       (pendingAction ? `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?` : '')
-    const replyText = shouldReplaceReplyWithActionConfirmation(rawReplyText, validatedAction)
-      ? buildActionConfirmationReply(validatedAction)
-      : rawReplyText
+    const finalReplyText =
+      (agentOutput.reply || aiResponse.output_text || '').trim() ||
+      (pendingAction
+        ? `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?`
+        : 'לא הצלחתי לנסח תשובה כרגע. נסה לנסח שוב או לפרט קצת יותר.')
 
     if (pendingAction) {
       clearPendingAgentFollowUp(accountId, apartmentId)
-    } else if (looksLikeClarifyingQuestion(replyText)) {
+    } else if (looksLikeClarifyingQuestion(finalReplyText)) {
       storePendingAgentFollowUp({
         accountId,
         apartmentId,
         originalMessage: pendingFollowUp?.originalMessage ?? body.message,
-        latestAssistantQuestion: replyText,
+        latestAssistantQuestion: finalReplyText,
       })
     } else {
       clearPendingAgentFollowUp(accountId, apartmentId)
     }
 
     response.json({
-      reply: replyText,
+      reply: finalReplyText,
       pendingAction,
     })
   } catch (error) {
