@@ -479,12 +479,13 @@ export function ApartmentInfoPage() {
       </div>
 
       {canManageApartmentInfo && isEditorOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeEditor}>
           <section
             className="roommate-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="apartment-info-editor-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="roommate-modal__head">
               <div>
@@ -646,12 +647,13 @@ export function ApartmentInfoPage() {
       ) : null}
 
       {selectedItem ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeDetails}>
           <section
             className="roommate-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="apartment-info-details-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="roommate-modal__head">
               <div>

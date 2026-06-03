@@ -301,12 +301,13 @@ export function TicketDetailPage() {
       </Card>
 
       {isEditOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeEditModal}>
           <section
             className="ticket-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="edit-ticket-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="ticket-modal__head">
               <div>

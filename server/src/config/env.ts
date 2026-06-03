@@ -15,7 +15,7 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   OPENAI_API_KEY: z.string().min(1).optional(),
   OPENAI_ASSISTANT_ENABLED: z.coerce.boolean().default(false),
-  OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
+  OPENAI_MODEL: z.string().min(1).default('gpt-5'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
   AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),

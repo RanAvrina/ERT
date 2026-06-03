@@ -419,12 +419,13 @@ export function PaymentsPage() {
       )}
 
       {isPaymentModalOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closePaymentModal}>
           <section
             className="payment-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-payment-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="payment-modal__head">
               <div>
@@ -527,12 +528,13 @@ export function PaymentsPage() {
       ) : null}
 
       {selectedPayment ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={() => setSelectedPayment(null)}>
           <section
             className="payment-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="payment-details-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="payment-modal__head">
               <div>

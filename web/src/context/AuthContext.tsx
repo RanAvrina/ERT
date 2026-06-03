@@ -324,16 +324,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!isSupabaseConfigured) return
 
     let cancelled = false
-
-    void refreshSessionUser()
+    let receivedInitialSessionEvent = false
 
     const unsubscribe = subscribeToAuthChanges((_event, sessionUser) => {
       if (cancelled) return
+      if (_event === 'INITIAL_SESSION') {
+        receivedInitialSessionEvent = true
+      }
       void refreshSessionUser(sessionUser?.email ?? null)
     })
 
+    const fallbackRefreshTimer = window.setTimeout(() => {
+      if (cancelled || receivedInitialSessionEvent) return
+      void refreshSessionUser()
+    }, 300)
+
     return () => {
       cancelled = true
+      window.clearTimeout(fallbackRefreshTimer)
       unsubscribe()
     }
   }, [refreshSessionUser])

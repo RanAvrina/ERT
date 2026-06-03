@@ -753,12 +753,13 @@ export function TasksPage() {
       )}
 
       {isTaskModalOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeTaskModal}>
           <section
             className="task-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="task-modal-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="task-modal__head">
               <div>
@@ -851,12 +852,13 @@ export function TasksPage() {
       ) : null}
 
       {isSavedTaskModalOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeSavedTaskModal}>
           <section
             className="task-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="saved-task-modal-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="task-modal__head">
               <div>
@@ -958,12 +960,13 @@ export function TasksPage() {
       ) : null}
 
       {selectedTask ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={() => setSelectedTask(null)}>
           <section
             className="task-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="task-details-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="task-modal__head">
               <div>

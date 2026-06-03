@@ -233,7 +233,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
   }, [current?.apartment.id, setExpenses, setPayments])
 
   const addExpense = useCallback(
-    (expense: NewExpenseInput) => {
+    async (expense: NewExpenseInput) => {
       if (isSupabaseConfigured) {
         const optimisticExpense: Expense = {
           id: nextTempExpenseId.current,
@@ -245,38 +245,39 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
 
         setExpenses((currentExpenses) => [optimisticExpense, ...currentExpenses])
 
-        void createExpenseViaApi({
-          apartmentId: expense.apartment_id,
-          paidByAccountId: expense.paid_by,
-          amount: expense.amount,
-          description: expense.description,
-          category: expense.category,
-          date: expense.date,
-          participantAccountIds: expense.participant_ids,
-          attachments: expense.attachments,
-        })
-          .then((nextExpense) => {
-            if (!nextExpense) {
-              setExpenses((currentExpenses) =>
-                currentExpenses.filter((item) => item.id !== optimisticExpense.id),
-              )
-              return
-            }
-
-            setExpenses((currentExpenses) =>
-              currentExpenses.map((item) =>
-                item.id === optimisticExpense.id ? nextExpense : item,
-              ),
-            )
+        try {
+          const nextExpense = await createExpenseViaApi({
+            apartmentId: expense.apartment_id,
+            paidByAccountId: expense.paid_by,
+            amount: expense.amount,
+            description: expense.description,
+            category: expense.category,
+            date: expense.date,
+            participantAccountIds: expense.participant_ids,
+            attachments: expense.attachments,
           })
-          .catch((error) => {
-            console.error('Failed to create expense.', error)
+
+          if (!nextExpense) {
             setExpenses((currentExpenses) =>
               currentExpenses.filter((item) => item.id !== optimisticExpense.id),
             )
-          })
+            throw new Error('לא הצלחנו לשמור את ההוצאה.')
+          }
 
-        return Promise.resolve(optimisticExpense)
+          setExpenses((currentExpenses) =>
+            currentExpenses.map((item) =>
+              item.id === optimisticExpense.id ? nextExpense : item,
+            ),
+          )
+
+          return nextExpense
+        } catch (error) {
+          console.error('Failed to create expense.', error)
+          setExpenses((currentExpenses) =>
+            currentExpenses.filter((item) => item.id !== optimisticExpense.id),
+          )
+          throw error
+        }
       }
 
       const nextExpense: Expense = {
@@ -287,7 +288,7 @@ export function ExpensesProvider({ children }: { children: ReactNode }) {
       }
       nextExpenseId.current += 1
       setExpenses((currentExpenses) => [nextExpense, ...currentExpenses])
-      return Promise.resolve(nextExpense)
+      return nextExpense
     },
     [setExpenses],
   )

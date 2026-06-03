@@ -16,12 +16,17 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   return (
-    <div className="modal-backdrop modal-backdrop--dialog" role="presentation">
+    <div
+      className="modal-backdrop modal-backdrop--dialog"
+      role="presentation"
+      onClick={onCancel}
+    >
       <section
         className="confirm-dialog card"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
+        onClick={(event) => event.stopPropagation()}
       >
         <div className="confirm-dialog__head">
           <span className="confirm-dialog__mark confirm-dialog__mark--danger" aria-hidden="true">

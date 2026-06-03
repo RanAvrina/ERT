@@ -16,12 +16,24 @@ let bucketReadyPromise: Promise<void> | null = null
 const bucketPublicPrefix = `${env.SUPABASE_URL}/storage/v1/object/public/${ATTACHMENTS_BUCKET}/`
 
 function sanitizePathSegment(value: string) {
-  return value
-    .trim()
-    .replace(/[^\p{L}\p{N}._-]+/gu, '-')
+  const normalized = value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 120) || 'file'
+    .slice(0, 120)
+
+  if (normalized) {
+    return normalized
+  }
+
+  return value
+    .trim()
+    .replace(/\.[^.]+$/, '')
+    .replace(/\s+/g, '-')
+    .replace(/[^A-Za-z0-9._-]+/g, '')
+    .slice(0, 40) || 'file'
 }
 
 function parseDataUrl(dataUrl: string) {

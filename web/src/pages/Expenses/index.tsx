@@ -8,6 +8,8 @@ import { openAttachment } from '../../utils/attachments'
 
 const allCategories = 'כל הקטגוריות'
 const allMonths = 'all'
+const maxAttachmentBytes = 4 * 1024 * 1024
+const maxTotalAttachmentBytes = 8 * 1024 * 1024
 const expenseCategoryOptions = ['חשבונות', 'מזון', 'ניקיון', 'תחזוקה', 'אחר']
 
 interface ExpenseFormState {
@@ -106,6 +108,7 @@ export function ExpensesPage() {
   const [form, setForm] = useState<ExpenseFormState>(() => createInitialFormState(roommates))
   const [attachments, setAttachments] = useState<ExpenseAttachment[]>([])
   const [formError, setFormError] = useState('')
+  const [isSavingExpense, setIsSavingExpense] = useState(false)
 
   const activeExpenses = expenses.filter(
     (expense) => expense.status === 'active' && expense.apartment_id === apartmentId,
@@ -186,6 +189,7 @@ export function ExpensesPage() {
   }
 
   function closeAddModal() {
+    if (isSavingExpense) return
     setIsAddOpen(false)
     setEditingExpense(null)
     setForm(createInitialFormState(roommates))
@@ -196,6 +200,21 @@ export function ExpensesPage() {
   async function onAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? [])
     if (!files.length) return
+
+    const oversizedFile = files.find((file) => file.size > maxAttachmentBytes)
+    if (oversizedFile) {
+      setFormError(`הקובץ ${oversizedFile.name} גדול מדי. אפשר לצרף קבצים עד 4MB.`)
+      event.target.value = ''
+      return
+    }
+
+    const currentTotalSize = attachments.reduce((sum, attachment) => sum + attachment.size, 0)
+    const nextFilesTotalSize = files.reduce((sum, file) => sum + file.size, 0)
+    if (currentTotalSize + nextFilesTotalSize > maxTotalAttachmentBytes) {
+      setFormError('סך כל הקבצים גדול מדי. אפשר לצרף עד 8MB בסך הכול.')
+      event.target.value = ''
+      return
+    }
 
     try {
       const nextAttachments = await Promise.all(
@@ -209,6 +228,7 @@ export function ExpensesPage() {
       )
 
       setAttachments((currentAttachments) => [...currentAttachments, ...nextAttachments])
+      setFormError('')
       event.target.value = ''
     } catch {
       setFormError('לא הצלחנו לצרף את הקבצים שנבחרו.')
@@ -268,6 +288,8 @@ export function ExpensesPage() {
       return
     }
 
+    setIsSavingExpense(true)
+
     try {
       if (editingExpense) {
         const updatedExpense = await updateExpense(editingExpense.id, {
@@ -304,9 +326,11 @@ export function ExpensesPage() {
       }
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'לא הצלחנו לשמור את ההוצאה.')
+      setIsSavingExpense(false)
       return
     }
 
+    setIsSavingExpense(false)
     closeAddModal()
   }
 
@@ -420,12 +444,13 @@ export function ExpensesPage() {
       </Card>
 
       {isAddOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeAddModal}>
           <section
             className="expense-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-expense-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="expense-modal__head">
               <div>
@@ -532,7 +557,7 @@ export function ExpensesPage() {
                     multiple
                     onChange={(event) => void onAttachmentChange(event)}
                   />
-                  <span>בחרו קבלה, חשבון או מסמך נוסף</span>
+                  <span>הוספת מסמך</span>
                 </label>
               </div>
 
@@ -562,11 +587,20 @@ export function ExpensesPage() {
               {formError ? <p className="form-message form-message--error">{formError}</p> : null}
 
               <div className="expense-form__actions">
-                <button type="button" className="btn btn--secondary" onClick={closeAddModal}>
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={closeAddModal}
+                  disabled={isSavingExpense}
+                >
                   ביטול
                 </button>
-                <button type="submit" className="btn btn--primary">
-                  {editingExpense ? 'שמירת שינויים' : 'שמירת הוצאה'}
+                <button type="submit" className="btn btn--primary" disabled={isSavingExpense}>
+                  {isSavingExpense
+                    ? 'שומר הוצאה...'
+                    : editingExpense
+                      ? 'שמירת שינויים'
+                      : 'שמירת הוצאה'}
                 </button>
               </div>
             </form>
@@ -575,12 +609,13 @@ export function ExpensesPage() {
       ) : null}
 
       {selectedExpense ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={() => setSelectedExpense(null)}>
           <section
             className="expense-modal expense-modal--details card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="expense-details-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="expense-modal__head">
               <div>

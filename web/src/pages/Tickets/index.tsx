@@ -158,12 +158,13 @@ export function TicketsPage() {
       </Card>
 
       {isTicketModalOpen && !isLandlord ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeTicketModal}>
           <section
             className="ticket-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-ticket-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="ticket-modal__head">
               <div>

@@ -675,6 +675,137 @@ function getDeterministicApartmentInfoReply(message: string, context: AgentConte
   return null
 }
 
+const QUERY_MONTHS = [
+  { month: 1, names: ['\u05d9\u05e0\u05d5\u05d0\u05e8'] },
+  { month: 2, names: ['\u05e4\u05d1\u05e8\u05d5\u05d0\u05e8'] },
+  { month: 3, names: ['\u05de\u05e8\u05e5', '\u05de\u05e8\u05e5\''] },
+  { month: 4, names: ['\u05d0\u05e4\u05e8\u05d9\u05dc'] },
+  { month: 5, names: ['\u05de\u05d0\u05d9'] },
+  { month: 6, names: ['\u05d9\u05d5\u05e0\u05d9'] },
+  { month: 7, names: ['\u05d9\u05d5\u05dc\u05d9'] },
+  { month: 8, names: ['\u05d0\u05d5\u05d2\u05d5\u05e1\u05d8'] },
+  { month: 9, names: ['\u05e1\u05e4\u05d8\u05de\u05d1\u05e8'] },
+  { month: 10, names: ['\u05d0\u05d5\u05e7\u05d8\u05d5\u05d1\u05e8'] },
+  { month: 11, names: ['\u05e0\u05d5\u05d1\u05de\u05d1\u05e8'] },
+  { month: 12, names: ['\u05d3\u05e6\u05de\u05d1\u05e8'] },
+] as const
+
+const EXPENSE_QUERY_TOPICS = [
+  {
+    label: '\u05de\u05d9\u05dd',
+    keywords: ['\u05de\u05d9\u05dd'],
+  },
+  {
+    label: '\u05d7\u05e9\u05de\u05dc',
+    keywords: ['\u05d7\u05e9\u05de\u05dc'],
+  },
+  {
+    label: '\u05d0\u05d9\u05e0\u05d8\u05e8\u05e0\u05d8',
+    keywords: ['\u05d0\u05d9\u05e0\u05d8\u05e8\u05e0\u05d8', '\u05d5\u05d5\u05d9\u05d9\u05e4\u05d9', 'wifi'],
+  },
+  {
+    label: '\u05d2\u05d6',
+    keywords: ['\u05d2\u05d6'],
+  },
+  {
+    label: '\u05d0\u05e8\u05e0\u05d5\u05e0\u05d4',
+    keywords: ['\u05d0\u05e8\u05e0\u05d5\u05e0\u05d4'],
+  },
+  {
+    label: '\u05e9\u05db\u05d9\u05e8\u05d5\u05ea',
+    keywords: [
+      '\u05e9\u05db\u05d9\u05e8\u05d5\u05ea',
+      '\u05e9\u05db\u05e8 \u05d3\u05d9\u05e8\u05d4',
+      '\u05e9\u05db\u05e8\u05d3\u05d9\u05e8\u05d4',
+    ],
+  },
+  {
+    label: '\u05de\u05d6\u05d5\u05df',
+    keywords: ['\u05de\u05d6\u05d5\u05df', '\u05e1\u05d5\u05e4\u05e8', '\u05de\u05e7\u05d5\u05dc\u05ea'],
+  },
+] as const
+
+function resolveMessageMonth(
+  message: string,
+  today: string,
+): { month: number; year: number; label: string; monthKey: string } | null {
+  const normalizedMessage = normalizeText(message)
+  const explicitYearMatch = normalizedMessage.match(/\b(20\d{2})\b/)
+  const currentYear = Number(today.slice(0, 4))
+  const currentMonth = Number(today.slice(5, 7))
+
+  for (const entry of QUERY_MONTHS) {
+    if (!entry.names.some((name) => normalizedMessage.includes(normalizeText(name)))) {
+      continue
+    }
+
+    const year = explicitYearMatch
+      ? Number(explicitYearMatch[1])
+      : entry.month > currentMonth
+        ? currentYear - 1
+        : currentYear
+
+    return {
+      month: entry.month,
+      year,
+      label: `${entry.names[0]} ${year}`,
+      monthKey: `${year}-${String(entry.month).padStart(2, '0')}`,
+    }
+  }
+
+  return null
+}
+
+function detectExpenseTopic(message: string) {
+  const normalizedMessage = normalizeText(message)
+  return (
+    EXPENSE_QUERY_TOPICS.find((topic) =>
+      topic.keywords.some((keyword) => normalizedMessage.includes(normalizeText(keyword))),
+    ) ?? null
+  )
+}
+
+function getDeterministicExpenseSummaryReply(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  const asksForSpentAmount =
+    normalizedMessage.includes('\u05db\u05de\u05d4 \u05e9\u05d9\u05dc\u05de\u05e0\u05d5') ||
+    normalizedMessage.includes('\u05db\u05de\u05d4 \u05d4\u05d5\u05e6\u05d0\u05e0\u05d5') ||
+    normalizedMessage.includes('\u05de\u05d4 \u05e9\u05d9\u05dc\u05de\u05e0\u05d5') ||
+    normalizedMessage.includes('\u05de\u05d4 \u05d4\u05d5\u05e6\u05d0\u05e0\u05d5')
+
+  if (!asksForSpentAmount) {
+    return null
+  }
+
+  const topic = detectExpenseTopic(message)
+  const month = resolveMessageMonth(message, context.today)
+  if (!topic || !month) {
+    return null
+  }
+
+  const matchingExpenses = context.expenses.filter((expense) => {
+    const dateMonth = expense.date.slice(0, 7)
+    if (dateMonth !== month.monthKey) return false
+
+    const haystack = normalizeText(
+      [expense.description, expense.category, expense.paidByName].filter(Boolean).join(' '),
+    )
+
+    return topic.keywords.some((keyword) => haystack.includes(normalizeText(keyword)))
+  })
+
+  if (!matchingExpenses.length) {
+    return `לפי ההוצאות הרשומות במערכת, לא נמצאה הוצאת ${topic.label} בחודש ${month.label}.`
+  }
+
+  const totalAmount = matchingExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
+  const details = matchingExpenses
+    .map((expense) => `- ${expense.description}: ${formatCurrency(Number(expense.amount))} בתאריך ${formatDate(expense.date)}`)
+    .join('\n')
+
+  return `בחודש ${month.label} שילמתם על ${topic.label} בסך הכול ${formatCurrency(totalAmount)}.\n${details}`
+}
+
 agentRouter.use(
   createRateLimit({
     windowMs: env.RATE_LIMIT_WINDOW_MS,
@@ -697,6 +828,7 @@ agentRouter.post('/', async (request, response, next) => {
     const deterministicDebtReply = getDeterministicDebtReply(body.message, context)
     const deterministicOperationsReply = getDeterministicOperationsReply(body.message, context)
     const deterministicApartmentInfoReply = getDeterministicApartmentInfoReply(body.message, context)
+    const deterministicExpenseSummaryReply = getDeterministicExpenseSummaryReply(body.message, context)
     const pendingFollowUp = getPendingAgentFollowUp(accountId, apartmentId)
 
     if (deterministicDebtReply) {
@@ -721,6 +853,15 @@ agentRouter.post('/', async (request, response, next) => {
       clearPendingAgentFollowUp(accountId, apartmentId)
       response.json({
         reply: deterministicApartmentInfoReply,
+        pendingAction: null,
+      })
+      return
+    }
+
+    if (deterministicExpenseSummaryReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicExpenseSummaryReply,
         pendingAction: null,
       })
       return

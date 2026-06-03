@@ -309,12 +309,13 @@ export function ShoppingPage() {
       ) : null}
 
       {isShoppingModalOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeShoppingModal}>
           <section
             className="shopping-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-shopping-item-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="shopping-modal__head">
               <div>
@@ -407,12 +408,13 @@ export function ShoppingPage() {
       ) : null}
 
       {selectedItem ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={() => setSelectedItem(null)}>
           <section
             className="shopping-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="shopping-details-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="shopping-modal__head">
               <div>

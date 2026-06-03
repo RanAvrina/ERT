@@ -262,12 +262,13 @@ export function RoommatesPage() {
       </Card>
 
       {isAdmin && isLandlordModalOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeLandlordModal}>
           <section
             className="roommate-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-landlord-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="roommate-modal__head">
               <div>
@@ -382,12 +383,13 @@ export function RoommatesPage() {
       ) : null}
 
       {isAdmin && isInviteOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" onClick={closeInviteModal}>
           <section
             className="roommate-modal card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="invite-title"
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="roommate-modal__head">
               <div>
