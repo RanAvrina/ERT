@@ -97,6 +97,7 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
   ])
 
   const activeUsers = state.users.filter((user) => user.status === 'active')
+  const residentUsers = activeUsers.filter((user) => user.role !== 'landlord')
   const currentUser = activeUsers.find((user) => user.id === currentAccountId) ?? null
   const { netBalanceByUser, settlements } = calculateBalances(expenses, payments)
   const settlementsWithNames: BalanceSettlement[] = settlements.map((settlement) => ({
@@ -117,7 +118,7 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
         }
       : null,
     apartment: state.apartment.name,
-    roommates: activeUsers.map((user) => ({
+    roommates: residentUsers.map((user) => ({
       id: user.id,
       name: user.name,
       role: user.role,

@@ -182,6 +182,11 @@ async function getActiveUsers(apartmentId: number) {
   return state.users.filter((user) => user.status === 'active')
 }
 
+async function getResidentUsers(apartmentId: number) {
+  const activeUsers = await getActiveUsers(apartmentId)
+  return activeUsers.filter((user) => user.role !== 'landlord')
+}
+
 async function findAccountIdByName(apartmentId: number, requestedName?: string | null) {
   const activeUsers = await getActiveUsers(apartmentId)
   const normalizedName = requestedName?.trim()
@@ -203,10 +208,10 @@ async function resolveParticipantAccountIds(
   apartmentId: number,
   requestedNames: string[] | null | undefined,
 ) {
-  const activeUsers = await getActiveUsers(apartmentId)
+  const participantPool = await getResidentUsers(apartmentId)
 
   if (!requestedNames?.length) {
-    return activeUsers.map((user) => user.id)
+    return participantPool.map((user) => user.id)
   }
 
   const participantIds = new Set<number>()
@@ -215,13 +220,13 @@ async function resolveParticipantAccountIds(
     const normalizedName = rawName.trim()
     if (!normalizedName) continue
 
-    const exactMatch = activeUsers.find((user) => user.name === normalizedName)
+    const exactMatch = participantPool.find((user) => user.name === normalizedName)
     if (exactMatch) {
       participantIds.add(exactMatch.id)
       continue
     }
 
-    const partialMatches = activeUsers.filter((user) => user.name.includes(normalizedName))
+    const partialMatches = participantPool.filter((user) => user.name.includes(normalizedName))
     if (partialMatches.length === 1) {
       participantIds.add(partialMatches[0].id)
       continue
@@ -233,7 +238,7 @@ async function resolveParticipantAccountIds(
     throw new ApiError(404, `לא נמצא דייר בשם "${normalizedName}".`)
   }
 
-  return participantIds.size ? [...participantIds] : activeUsers.map((user) => user.id)
+  return participantIds.size ? [...participantIds] : participantPool.map((user) => user.id)
 }
 
 async function findTaskForAction(apartmentId: number, taskId?: number, taskTitle?: string) {
