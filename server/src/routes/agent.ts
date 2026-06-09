@@ -82,6 +82,31 @@ function parseAgentOutput(output: string) {
   }
 }
 
+function extractResponseText(response: unknown) {
+  const candidate = response as {
+    output_text?: string
+    output?: Array<{
+      text?: string
+      content?: Array<{ text?: string }>
+    }>
+  }
+
+  const directText = candidate.output_text?.trim()
+  if (directText) return directText
+
+  return (candidate.output ?? [])
+    .flatMap((item) => {
+      const nestedTexts = (item.content ?? [])
+        .map((contentItem) => contentItem.text?.trim() ?? '')
+        .filter(Boolean)
+
+      if (nestedTexts.length) return nestedTexts
+      return item.text?.trim() ? [item.text.trim()] : []
+    })
+    .join('\n')
+    .trim()
+}
+
 function requireActiveApartment(request: Express.Request) {
   const membership = request.auth?.membership
   if (!membership || membership.status !== 'active') {
@@ -985,7 +1010,8 @@ agentRouter.post('/', async (request, response, next) => {
         .join('\n\n'),
     })
 
-    let agentOutput = parseAgentOutput(aiResponse.output_text)
+    const aiResponseText = extractResponseText(aiResponse)
+    let agentOutput = parseAgentOutput(aiResponseText)
     let validatedAction = agentOutput.action ? validateAgentAction(agentOutput.action) : null
 
     if (pendingFollowUp && looksLikeAffirmation(body.message) && !validatedAction) {
@@ -1013,7 +1039,7 @@ agentRouter.post('/', async (request, response, next) => {
         ].join('\n\n'),
       })
 
-      const confirmationOutput = parseAgentOutput(confirmationResponse.output_text)
+      const confirmationOutput = parseAgentOutput(extractResponseText(confirmationResponse))
       const confirmationAction = confirmationOutput.action
         ? validateAgentAction(confirmationOutput.action)
         : null
@@ -1036,7 +1062,7 @@ agentRouter.post('/', async (request, response, next) => {
       aiResponse.output_text ||
       (pendingAction ? `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?` : '')
     const finalReplyText =
-      (agentOutput.reply || aiResponse.output_text || '').trim() ||
+      (agentOutput.reply || aiResponseText || '').trim() ||
       (pendingAction
         ? `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?`
         : 'לא הצלחתי לנסח תשובה כרגע. נסה לנסח שוב או לפרט קצת יותר.')

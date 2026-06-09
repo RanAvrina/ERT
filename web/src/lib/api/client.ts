@@ -60,6 +60,7 @@ async function getAccessToken() {
 interface ApiRequestOptions extends Omit<RequestInit, 'headers'> {
   headers?: Record<string, string>
   authenticated?: boolean
+  timeoutMs?: number
 }
 
 function clearGetCache() {
@@ -123,7 +124,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   }
 
   const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
 
   const executeRequest = async () => {
     let response: Response

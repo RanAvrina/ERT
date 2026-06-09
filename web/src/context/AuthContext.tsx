@@ -98,12 +98,12 @@ function buildDetachedUser(account: AccountIdentity, role: User['role'] = 'tenan
 }
 
 async function readBootstrapWithRetry() {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       return await readBootstrapViaApi()
     } catch (error) {
-      if (attempt === 2) throw error
-      await new Promise((resolve) => window.setTimeout(resolve, 200 * (attempt + 1)))
+      if (attempt === 1) throw error
+      await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)))
     }
   }
 
