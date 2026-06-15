@@ -3,7 +3,6 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   type ReactNode,
 } from 'react'
@@ -405,20 +404,17 @@ export function TicketsProvider({ children }: { children: ReactNode }) {
     return comments.filter((comment) => comment.ticket_id === ticketId)
   }
 
-  const value = useMemo(
-    () => ({
-      tickets,
-      comments,
-      addTicket,
-      updateTicket,
-      deleteTicket,
-      addComment,
-      updateTicketStatus,
-      getTicketById,
-      getCommentsByTicketId,
-    }),
-    [tickets, comments],
-  )
+  const value: TicketsContextValue = {
+    tickets,
+    comments,
+    addTicket,
+    updateTicket,
+    deleteTicket,
+    addComment,
+    updateTicketStatus,
+    getTicketById,
+    getCommentsByTicketId,
+  }
 
   return <TicketsContext.Provider value={value}>{children}</TicketsContext.Provider>
 }

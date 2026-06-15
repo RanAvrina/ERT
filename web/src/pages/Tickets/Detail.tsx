@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { InlineStatusMenu } from '../../components/InlineStatusMenu'
-import { TicketStatusActionChip, TicketStatusChip, ticketLabels } from '../../components/StatusChip'
+import { TicketStatusActionChip, TicketStatusChip } from '../../components/StatusChip'
+import { ticketLabels } from '../../components/statusLabels'
 import { useAuth } from '../../context/AuthContext'
 import { useApartment } from '../../context/ApartmentContext'
 import { useTickets } from '../../context/TicketsContext'
@@ -18,12 +19,7 @@ interface TicketEditFormState {
 }
 
 const ticketCategoryOptions: TicketCategory[] = ['תקלה', 'בקשה', 'כספים', 'אחר']
-
-const ticketStatusOptions: TicketStatus[] = [
-  'open',
-  'in_progress',
-  'closed',
-]
+const ticketStatusOptions: TicketStatus[] = ['open', 'in_progress', 'closed']
 
 function formatTicketDateTime(value: string) {
   return new Intl.DateTimeFormat('he-IL', {
@@ -48,6 +44,7 @@ export function TicketDetailPage() {
     updateTicketStatus,
     getCommentsByTicketId,
   } = useTickets()
+
   const ticket = getTicketById(id)
   const apartmentId = current?.apartment.id ?? 0
   const [commentText, setCommentText] = useState('')
@@ -57,6 +54,11 @@ export function TicketDetailPage() {
   const [editError, setEditError] = useState('')
   const [actionError, setActionError] = useState('')
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false)
+  const [editForm, setEditForm] = useState<TicketEditFormState>({
+    title: ticket?.title ?? '',
+    description: ticket?.description ?? '',
+    category: ticket?.category ?? 'תקלה',
+  })
   const isLandlord = user?.role === 'landlord'
   const canManageStatus = isLandlord || user?.role === 'admin'
 
@@ -72,12 +74,6 @@ export function TicketDetailPage() {
   }
 
   const currentTicket = ticket
-  const [editForm, setEditForm] = useState<TicketEditFormState>({
-    title: currentTicket.title,
-    description: currentTicket.description,
-    category: currentTicket.category ?? 'תקלה',
-  })
-
   const knownUsers = [
     ...(current?.roommates ?? []),
     ...(current?.landlordUser ? [current.landlordUser] : []),
@@ -217,7 +213,11 @@ export function TicketDetailPage() {
             </div>
           ) : (
             <div className="roommate-actions">
-              <button type="button" className="btn btn--secondary btn--small" onClick={openEditModal}>
+              <button
+                type="button"
+                className="btn btn--secondary btn--small"
+                onClick={openEditModal}
+              >
                 עריכה
               </button>
               <button
@@ -257,6 +257,7 @@ export function TicketDetailPage() {
             })}
           </ul>
         )}
+
         <form className="comment-form" onSubmit={handleCommentSubmit} noValidate>
           <label className="field">
             <span className="field__label">הערה חדשה</span>
@@ -269,9 +270,7 @@ export function TicketDetailPage() {
               }
             />
           </label>
-          {commentError ? (
-            <p className="form-message form-message--error">{commentError}</p>
-          ) : null}
+          {commentError ? <p className="form-message form-message--error">{commentError}</p> : null}
           <div className="comment-form__actions">
             <button type="submit" className="btn btn--primary">
               שליחת הודעה

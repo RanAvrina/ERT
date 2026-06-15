@@ -10,6 +10,16 @@ interface AccountRow {
   status: 'active' | 'inactive'
 }
 
+const ACCOUNT_CACHE_TTL_MS = 15_000
+const accountByEmailCache = new Map<
+  string,
+  { value: AuthAccount | null; expiresAt: number }
+>()
+const accountByIdCache = new Map<
+  number,
+  { value: AuthAccount | null; expiresAt: number }
+>()
+
 function mapAccountRow(row: AccountRow): AuthAccount {
   return {
     id: row.id,
@@ -20,8 +30,27 @@ function mapAccountRow(row: AccountRow): AuthAccount {
   }
 }
 
+function cacheAccount(account: AuthAccount | null) {
+  if (!account) return
+
+  const expiresAt = Date.now() + ACCOUNT_CACHE_TTL_MS
+  accountByEmailCache.set(account.email.trim().toLowerCase(), {
+    value: account,
+    expiresAt,
+  })
+  accountByIdCache.set(account.id, {
+    value: account,
+    expiresAt,
+  })
+}
+
 export async function findAccountByEmail(email: string) {
   const normalizedEmail = email.trim().toLowerCase()
+  const cached = accountByEmailCache.get(normalizedEmail)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
   const { data, error } = await supabaseAdmin
     .from('accounts')
     .select('*')
@@ -30,10 +59,23 @@ export async function findAccountByEmail(email: string) {
     .maybeSingle()
 
   if (error) throw new Error(`Failed to load account by email: ${error.message}`)
-  return data ? mapAccountRow(data as AccountRow) : null
+  const account = data ? mapAccountRow(data as AccountRow) : null
+  accountByEmailCache.set(normalizedEmail, {
+    value: account,
+    expiresAt: Date.now() + ACCOUNT_CACHE_TTL_MS,
+  })
+  if (account) {
+    cacheAccount(account)
+  }
+  return account
 }
 
 export async function findAccountById(accountId: number) {
+  const cached = accountByIdCache.get(accountId)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
   const { data, error } = await supabaseAdmin
     .from('accounts')
     .select('*')
@@ -42,7 +84,15 @@ export async function findAccountById(accountId: number) {
     .maybeSingle()
 
   if (error) throw new Error(`Failed to load account by id: ${error.message}`)
-  return data ? mapAccountRow(data as AccountRow) : null
+  const account = data ? mapAccountRow(data as AccountRow) : null
+  accountByIdCache.set(accountId, {
+    value: account,
+    expiresAt: Date.now() + ACCOUNT_CACHE_TTL_MS,
+  })
+  if (account) {
+    cacheAccount(account)
+  }
+  return account
 }
 
 export async function requireAccountById(accountId: number) {
@@ -78,5 +128,7 @@ export async function createAccount(input: {
     throw new Error(`Failed to create account: ${error.message}`)
   }
 
-  return mapAccountRow(data as AccountRow)
+  const account = mapAccountRow(data as AccountRow)
+  cacheAccount(account)
+  return account
 }

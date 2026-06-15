@@ -16,6 +16,47 @@ export interface ApartmentSummary {
   isActive: boolean
 }
 
+const APARTMENT_STATE_CACHE_TTL_MS = 5_000
+interface ApartmentStateSnapshot {
+  apartment: {
+    id: number
+    name: string
+    is_active: boolean
+  }
+  adminUser: {
+    id: number
+    apartment_id: number
+    name: string
+    email: string
+    role: 'admin' | 'tenant' | 'landlord'
+    status: 'active' | 'inactive'
+    joined_at: string
+  }
+  landlordUser: {
+    id: number
+    apartment_id: number
+    name: string
+    email: string
+    role: 'admin' | 'tenant' | 'landlord'
+    status: 'active' | 'inactive'
+    joined_at: string
+  } | null
+  users: Array<{
+    id: number
+    apartment_id: number
+    name: string
+    email: string
+    role: 'admin' | 'tenant' | 'landlord'
+    status: 'active' | 'inactive'
+    joined_at: string
+  }>
+}
+
+const apartmentStateCache = new Map<
+  number,
+  { value: ApartmentStateSnapshot; expiresAt: number }
+>()
+
 function mapApartmentRow(row: ApartmentRow): ApartmentSummary {
   return {
     id: row.id,
@@ -99,7 +140,14 @@ export async function getApartmentAccessSnapshot(apartmentId: number) {
   }
 }
 
-export async function getApartmentStateSnapshot(apartmentId: number) {
+export async function getApartmentStateSnapshot(
+  apartmentId: number,
+): Promise<ApartmentStateSnapshot> {
+  const cached = apartmentStateCache.get(apartmentId)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
   const apartment = await requireApartmentById(apartmentId)
   const memberships = await listActiveMembershipsByApartmentId(apartmentId)
   const accountIds = [...new Set(memberships.map((membership) => membership.account_id))]
@@ -144,7 +192,7 @@ export async function getApartmentStateSnapshot(apartmentId: number) {
     throw new ApiError(500, 'Apartment admin membership is missing.')
   }
 
-  return {
+  const snapshot = {
     apartment: {
       id: apartment.id,
       name: apartment.name,
@@ -154,4 +202,11 @@ export async function getApartmentStateSnapshot(apartmentId: number) {
     landlordUser: users.find((user) => user.role === 'landlord') ?? null,
     users,
   }
+
+  apartmentStateCache.set(apartmentId, {
+    value: snapshot,
+    expiresAt: Date.now() + APARTMENT_STATE_CACHE_TTL_MS,
+  })
+
+  return snapshot
 }

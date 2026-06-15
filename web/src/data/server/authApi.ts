@@ -55,7 +55,7 @@ export async function readBootstrapViaApi() {
     apartmentState: ApartmentStateApiResponse | null
   }>('/auth/bootstrap', {
     method: 'GET',
-    timeoutMs: 12_000,
+    timeoutMs: 8_000,
   }).then((response): {
     account: AccountIdentity | null
     membership: AuthMembershipApiResponse | null

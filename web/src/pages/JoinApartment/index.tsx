@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { AuthShell } from '../../components/auth/AuthShell'
@@ -104,7 +104,7 @@ export function JoinApartmentPage() {
     remoteApartmentName ?? localInviteApartment?.apartment.name ?? 'הזמנה לדירה'
   const roleLabel = inviteRole === 'landlord' ? 'בעל דירה' : 'שותף'
 
-  function rememberInvite() {
+  const rememberInvite = useCallback(() => {
     if (!isInviteValid || !inviteToken) return
 
     clearPendingApartment()
@@ -114,7 +114,7 @@ export function JoinApartmentPage() {
       role: inviteRole,
       token: inviteToken,
     })
-  }
+  }, [apartmentName, inviteApartmentId, inviteRole, inviteToken, isInviteValid])
 
   function switchAccount(target: typeof appRoutes.login | typeof appRoutes.register) {
     rememberInvite()
@@ -190,6 +190,7 @@ export function JoinApartmentPage() {
     isInviteValid,
     logout,
     navigate,
+    rememberInvite,
     refreshSessionUser,
     user,
   ])

@@ -187,8 +187,22 @@ async function getResidentUsers(apartmentId: number) {
   return activeUsers.filter((user) => user.role !== 'landlord')
 }
 
+async function requireResidentActorAccountId(
+  apartmentId: number,
+  accountId: number,
+  actionLabel: string,
+) {
+  const residentUsers = await getResidentUsers(apartmentId)
+  const actor = residentUsers.find((user) => user.id === accountId)
+  if (!actor) {
+    throw new ApiError(403, `${actionLabel} is only available for active apartment residents.`)
+  }
+
+  return actor.id
+}
+
 async function findAccountIdByName(apartmentId: number, requestedName?: string | null) {
-  const activeUsers = await getActiveUsers(apartmentId)
+  const activeUsers = await getResidentUsers(apartmentId)
   const normalizedName = requestedName?.trim()
   if (!normalizedName) return null
 
@@ -335,9 +349,14 @@ export async function confirmPendingAgentAction(input: {
 
   switch (action.type) {
     case 'create_task': {
+      const actorAccountId = await requireResidentActorAccountId(
+        input.apartmentId,
+        input.accountId,
+        'Task creation',
+      )
       const assigneeAccountId =
         (await findAccountIdByName(input.apartmentId, action.payload.assigneeName ?? null)) ??
-        input.accountId
+        actorAccountId
       const task = await createTask({
         apartmentId: input.apartmentId,
         title: resolveTaskTitle(action),
@@ -345,13 +364,14 @@ export async function confirmPendingAgentAction(input: {
         assigneeAccountId,
         dueDate: normalizeDate(action.payload.dueDate ?? null),
         status: 'open',
-        createdByAccountId: input.accountId,
+        createdByAccountId: actorAccountId,
       })
       message = `נפתחה מטלה חדשה: ${task.title}.`
       break
     }
 
     case 'update_task_due_date': {
+      await requireResidentActorAccountId(input.apartmentId, input.accountId, 'Task update')
       const task = await findTaskForAction(
         input.apartmentId,
         action.payload.taskId,
@@ -371,6 +391,7 @@ export async function confirmPendingAgentAction(input: {
     }
 
     case 'update_task_status': {
+      await requireResidentActorAccountId(input.apartmentId, input.accountId, 'Task update')
       const task = await findTaskForAction(
         input.apartmentId,
         action.payload.taskId,
@@ -390,9 +411,14 @@ export async function confirmPendingAgentAction(input: {
     }
 
     case 'create_expense': {
+      const actorAccountId = await requireResidentActorAccountId(
+        input.apartmentId,
+        input.accountId,
+        'Expense creation',
+      )
       const paidByAccountId =
         (await findAccountIdByName(input.apartmentId, action.payload.paidByName ?? null)) ??
-        input.accountId
+        actorAccountId
       const participantAccountIds = await resolveParticipantAccountIds(
         input.apartmentId,
         action.payload.participantNames,
@@ -411,9 +437,14 @@ export async function confirmPendingAgentAction(input: {
     }
 
     case 'create_shopping_item': {
+      const actorAccountId = await requireResidentActorAccountId(
+        input.apartmentId,
+        input.accountId,
+        'Shopping updates',
+      )
       await createShoppingItem({
         apartmentId: input.apartmentId,
-        actorAccountId: input.accountId,
+        actorAccountId,
         itemName: action.payload.itemName.trim(),
         quantity: action.payload.quantity?.trim() || null,
         category: action.payload.category?.trim() || null,
@@ -424,6 +455,11 @@ export async function confirmPendingAgentAction(input: {
     }
 
     case 'cancel_shopping_items': {
+      const actorAccountId = await requireResidentActorAccountId(
+        input.apartmentId,
+        input.accountId,
+        'Shopping updates',
+      )
       const matchingItems = await findShoppingItemsForAction(
         input.apartmentId,
         action.payload.itemName,
@@ -434,7 +470,7 @@ export async function confirmPendingAgentAction(input: {
         await updateShoppingItem({
           apartmentId: input.apartmentId,
           itemId: item.id,
-          actorAccountId: input.accountId,
+          actorAccountId,
           itemName: item.itemName,
           quantity: item.quantity,
           category: item.category,

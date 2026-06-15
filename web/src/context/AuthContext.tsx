@@ -103,7 +103,7 @@ async function readBootstrapWithRetry() {
       return await readBootstrapViaApi()
     } catch (error) {
       if (attempt === 1) throw error
-      await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)))
+      await new Promise((resolve) => window.setTimeout(resolve, 150 * (attempt + 1)))
     }
   }
 
@@ -310,14 +310,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return nextUser
       } catch {
         if (isLatestSync()) {
+          // Preserve the current in-memory session on transient bootstrap/network failures.
+          // A temporary API timeout should not behave like an explicit logout.
+          if (user) {
+            setIsAuthReady(true)
+            return user
+          }
+
           persistUser(null)
           clearActiveApartment()
           setIsAuthReady(true)
         }
-        return null
+        return user ?? null
       }
     },
-    [activateApartment, clearActiveApartment, persistUser],
+    [activateApartment, clearActiveApartment, completeInviteJoin, persistUser, user],
   )
 
   useEffect(() => {
@@ -337,7 +344,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const fallbackRefreshTimer = window.setTimeout(() => {
       if (cancelled || receivedInitialSessionEvent) return
       void refreshSessionUser()
-    }, 300)
+    }, 1200)
 
     return () => {
       cancelled = true
@@ -438,7 +445,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return { ok: true, error: '', account: nextAccount }
     },
-    [accounts, setAccounts],
+    [accounts, clearActiveApartment, persistUser, setAccounts],
   )
 
   const login = useCallback(
@@ -459,13 +466,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         if (isSupabaseConfigured) {
-          await signOutAuth().catch(() => undefined)
-          persistUser(null)
-          clearActiveApartment()
-
           const authUser = await signInWithSupabasePassword({ email: normalizedEmail, password })
 
-          let snapshot = await readBootstrapViaApi()
+          let snapshot = await readBootstrapWithRetry()
           let account = snapshot.account
 
           if (!account && authUser?.email) {
@@ -482,7 +485,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   : null,
             })
 
-            snapshot = await readBootstrapViaApi()
+            snapshot = await readBootstrapWithRetry()
             account = snapshot.account
           }
 

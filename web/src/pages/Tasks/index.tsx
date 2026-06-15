@@ -2,7 +2,8 @@
 import { Card } from '../../components/Card'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { InlineStatusMenu } from '../../components/InlineStatusMenu'
-import { TaskStatusActionChip, taskLabels } from '../../components/StatusChip'
+import { TaskStatusActionChip } from '../../components/StatusChip'
+import { taskLabels } from '../../components/statusLabels'
 import { useApartment } from '../../context/ApartmentContext'
 import { useAuth } from '../../context/AuthContext'
 import {

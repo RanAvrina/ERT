@@ -1,7 +1,7 @@
 import { apiRequest } from '../../lib/api/client'
 import type { Expense, ExpenseAttachment, Payment } from '../../types/models'
 
-interface ExpenseAttachmentApiResponse extends ExpenseAttachment {}
+type ExpenseAttachmentApiResponse = ExpenseAttachment
 
 interface ExpenseApiResponse {
   id: number

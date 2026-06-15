@@ -145,15 +145,31 @@ export function PaymentsPage() {
     () => new Map(roommates.map((roommate) => [roommate.id, roommate.name])),
     [roommates],
   )
+  const activeRoommateIds = useMemo(
+    () => new Set(roommates.map((roommate) => roommate.id)),
+    [roommates],
+  )
   const getUserName = (userId: number) => userNameById.get(userId) ?? 'דייר לא ידוע'
 
   const apartmentExpenses = useMemo(
-    () => expenses.filter((expense) => expense.apartment_id === apartmentId),
-    [apartmentId, expenses],
+    () =>
+      expenses.filter(
+        (expense) =>
+          expense.apartment_id === apartmentId &&
+          activeRoommateIds.has(expense.paid_by) &&
+          expense.participant_ids.every((participantId) => activeRoommateIds.has(participantId)),
+      ),
+    [activeRoommateIds, apartmentId, expenses],
   )
   const apartmentPayments = useMemo(
-    () => payments.filter((payment) => payment.apartment_id === apartmentId),
-    [apartmentId, payments],
+    () =>
+      payments.filter(
+        (payment) =>
+          payment.apartment_id === apartmentId &&
+          activeRoommateIds.has(payment.payer_id) &&
+          activeRoommateIds.has(payment.payee_id),
+      ),
+    [activeRoommateIds, apartmentId, payments],
   )
   const activePayments = apartmentPayments.filter((payment) => payment.status === 'recorded')
   const { settlements, netBalanceByUser } = useMemo(

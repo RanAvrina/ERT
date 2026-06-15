@@ -98,13 +98,30 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
 
   const activeUsers = state.users.filter((user) => user.status === 'active')
   const residentUsers = activeUsers.filter((user) => user.role !== 'landlord')
+  const residentUserIds = new Set(residentUsers.map((user) => user.id))
   const currentUser = activeUsers.find((user) => user.id === currentAccountId) ?? null
-  const { netBalanceByUser, settlements } = calculateBalances(expenses, payments)
+  const residentExpenses = expenses.filter(
+    (expense) =>
+      expense.status === 'active' &&
+      residentUserIds.has(expense.paidByAccountId) &&
+      expense.participantAccountIds.length > 0 &&
+      expense.participantAccountIds.every((accountId) => residentUserIds.has(accountId)),
+  )
+  const residentPayments = payments.filter(
+    (payment) =>
+      payment.status === 'recorded' &&
+      residentUserIds.has(payment.payerAccountId) &&
+      residentUserIds.has(payment.payeeAccountId),
+  )
+  const residentTasks = tasks.filter(
+    (task) => task.assigneeAccountId == null || residentUserIds.has(task.assigneeAccountId),
+  )
+  const { netBalanceByUser, settlements } = calculateBalances(residentExpenses, residentPayments)
   const settlementsWithNames: BalanceSettlement[] = settlements.map((settlement) => ({
     payerAccountId: settlement.payerAccountId,
-    payerName: activeUsers.find((user) => user.id === settlement.payerAccountId)?.name ?? '',
+    payerName: residentUsers.find((user) => user.id === settlement.payerAccountId)?.name ?? '',
     payeeAccountId: settlement.payeeAccountId,
-    payeeName: activeUsers.find((user) => user.id === settlement.payeeAccountId)?.name ?? '',
+    payeeName: residentUsers.find((user) => user.id === settlement.payeeAccountId)?.name ?? '',
     amount: settlement.amount,
   }))
 
@@ -124,7 +141,7 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
       role: user.role,
       status: user.status,
     })),
-    tasks: tasks.slice(0, 30).map((task) => ({
+    tasks: residentTasks.slice(0, 30).map((task) => ({
       id: task.id,
       title: task.title,
       description: task.description,
@@ -132,10 +149,9 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
       status: task.status,
       assigneeAccountId: task.assigneeAccountId,
       assigneeName:
-        activeUsers.find((user) => user.id === task.assigneeAccountId)?.name ?? null,
+        residentUsers.find((user) => user.id === task.assigneeAccountId)?.name ?? null,
     })),
-    expenses: expenses
-      .filter((expense) => expense.status === 'active')
+    expenses: residentExpenses
       .slice(0, 20)
       .map((expense) => ({
         id: expense.id,
@@ -145,14 +161,13 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
         date: expense.date,
         paidByAccountId: expense.paidByAccountId,
         paidByName:
-          activeUsers.find((user) => user.id === expense.paidByAccountId)?.name ?? null,
+          residentUsers.find((user) => user.id === expense.paidByAccountId)?.name ?? null,
         participantAccountIds: expense.participantAccountIds,
         participantNames: expense.participantAccountIds
-          .map((accountId) => activeUsers.find((user) => user.id === accountId)?.name ?? null)
+          .map((accountId) => residentUsers.find((user) => user.id === accountId)?.name ?? null)
           .filter((name): name is string => Boolean(name)),
       })),
-    payments: payments
-      .filter((payment) => payment.status === 'recorded')
+    payments: residentPayments
       .slice(0, 20)
       .map((payment) => ({
         id: payment.id,
@@ -161,10 +176,10 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
         date: payment.paymentDate,
         payerAccountId: payment.payerAccountId,
         payerName:
-          activeUsers.find((user) => user.id === payment.payerAccountId)?.name ?? null,
+          residentUsers.find((user) => user.id === payment.payerAccountId)?.name ?? null,
         payeeAccountId: payment.payeeAccountId,
         payeeName:
-          activeUsers.find((user) => user.id === payment.payeeAccountId)?.name ?? null,
+          residentUsers.find((user) => user.id === payment.payeeAccountId)?.name ?? null,
       })),
     shoppingItems: shoppingItems.slice(0, 25).map((item) => ({
       id: item.id,
@@ -199,8 +214,9 @@ export async function buildAgentContext(apartmentId: number, currentAccountId: n
       notes: item.notes,
     })),
     balanceSummary: {
-      currentUserNetBalance: currentUser ? netBalanceByUser[currentUser.id] ?? 0 : 0,
-      roommates: activeUsers.map((user) => {
+      currentUserNetBalance:
+        currentUser && residentUserIds.has(currentUser.id) ? netBalanceByUser[currentUser.id] ?? 0 : 0,
+      roommates: residentUsers.map((user) => {
         const netBalance = netBalanceByUser[user.id] ?? 0
         return {
           id: user.id,

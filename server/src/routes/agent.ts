@@ -107,6 +107,101 @@ function extractResponseText(response: unknown) {
     .trim()
 }
 
+function parseAmountFromMessage(message: string) {
+  const amountMatch = message.match(/(\d+(?:[.,]\d+)?)\s*(?:ש(?:קלים?|["״]ח)|שח)/)
+  if (!amountMatch) return null
+
+  const amount = Number(amountMatch[1].replace(',', '.'))
+  return Number.isFinite(amount) && amount > 0 ? amount : null
+}
+
+function parseDirectShoppingAction(message: string) {
+  const normalizedMessage = normalizeText(message)
+  if (!normalizedMessage.includes('תוסיף')) return null
+  if (
+    !normalizedMessage.includes('רשימת קניות') &&
+    !normalizedMessage.includes('לקניות') &&
+    !normalizedMessage.includes('לקנות')
+  ) {
+    return null
+  }
+
+  const itemMatch =
+    message.match(/תוסיף\s+(.+?)\s+לרשימת\s+קניות/i) ??
+    message.match(/תוסיף\s+(.+?)\s+לקניות/i) ??
+    message.match(/תוסיף\s+(.+?)\s+לקנות/i)
+
+  const rawValue = itemMatch?.[1]?.trim()
+  if (!rawValue) return null
+
+  const quantityMatch = rawValue.match(/(.+?)\s+(\d+(?:[.,]\d+)?)$/)
+  const itemName = quantityMatch?.[1]?.trim() ?? rawValue
+  const quantity = quantityMatch?.[2]?.trim() ?? null
+
+  if (!itemName) return null
+
+  return {
+    reply: `זיהיתי בקשה להוסיף פריט קניות: ${itemName}${quantity ? `, כמות ${quantity}` : ''}. לאשר?`,
+    action: {
+      type: 'create_shopping_item',
+      payload: {
+        itemName,
+        quantity,
+        category: null,
+      },
+    },
+  }
+}
+
+function parseDirectExpenseAction(message: string) {
+  const normalizedMessage = normalizeText(message)
+  const amount = parseAmountFromMessage(message)
+  if (!amount) return null
+  if (!normalizedMessage.includes('הוצאה') && !normalizedMessage.includes('תוסיף')) return null
+
+  const descriptionMatch =
+    message.match(/על\s+(.+?)(?:\s+ותחלק|\s+ותחלקי|\s+בין\s+|$)/) ??
+    message.match(/הוצאה\s+של\s+(.+?)(?:\s+בסכום|\s+על\s+|\s+בין\s+|$)/)
+
+  const description = descriptionMatch?.[1]?.trim() ?? 'הוצאה חדשה'
+  if (!description) return null
+
+  const splitBetweenEveryone =
+    normalizedMessage.includes('בין כולם') ||
+    normalizedMessage.includes('בין כל הדיירים') ||
+    normalizedMessage.includes('שווה בשווה')
+
+  if (
+    !splitBetweenEveryone &&
+    (normalizedMessage.includes('ביני') ||
+      normalizedMessage.includes('לבין') ||
+      normalizedMessage.includes('רק'))
+  ) {
+    return null
+  }
+
+  return {
+    reply: splitBetweenEveryone
+      ? `זיהיתי בקשה להוסיף הוצאה של ${amount} ש"ח עבור ${description}, מחולקת בין כל הדיירים. לאשר?`
+      : `זיהיתי בקשה להוסיף הוצאה של ${amount} ש"ח עבור ${description}. לאשר?`,
+    action: {
+      type: 'create_expense',
+      payload: {
+        description,
+        amount,
+        category: description,
+        date: null,
+        paidByName: null,
+        participantNames: null,
+      },
+    },
+  }
+}
+
+function parseDirectAgentAction(message: string) {
+  return parseDirectExpenseAction(message) ?? parseDirectShoppingAction(message)
+}
+
 function requireActiveApartment(request: Express.Request) {
   const membership = request.auth?.membership
   if (!membership || membership.status !== 'active') {
@@ -418,6 +513,19 @@ function getDeterministicDebtReply(message: string, context: AgentContext) {
   const currentUser = context.user
   if (!currentUser) return null
 
+  const asksForBreakdown =
+    normalizedMessage.includes('תפרט') ||
+    normalizedMessage.includes('פירוט') ||
+    normalizedMessage.includes('מאיפה') ||
+    normalizedMessage.includes('ממה') ||
+    normalizedMessage.includes('איך הגעתם') ||
+    normalizedMessage.includes('איך הגעתי') ||
+    normalizedMessage.includes('איך נוצר') ||
+    normalizedMessage.includes('מה יצר') ||
+    normalizedMessage.includes('למה חייבים לי') ||
+    normalizedMessage.includes('למה חייב לי') ||
+    normalizedMessage.includes('על מה חייבים לי')
+
   const namedRoommate = findRoommateByName(normalizedMessage, context)
   const asksWhoOwesUser =
     includesHebrew(normalizedMessage, HE.whoOwesMe) ||
@@ -493,10 +601,12 @@ function getDeterministicDebtReply(message: string, context: AgentContext) {
     const details = settlements
       .map((item) => `${item.payerName} ${formatCurrency(item.amount)}`)
       .join(', ')
+    const summary = `כרגע חייבים לך בסך הכול ${formatCurrency(totalOwed)}. ${details}.`
+    if (!asksForBreakdown) {
+      return summary
+    }
     const drivers = buildDebtDriversSummary(context, 'owed_to_user')
-    const parts = [
-      `כרגע חייבים לך בסך הכול ${formatCurrency(totalOwed)}. ${details}.`,
-    ]
+    const parts = [summary]
 
     if (drivers?.expensesText) {
       parts.push(`ההוצאות שיצרו את היתרה הנוכחית:\n${drivers.expensesText}`)
@@ -539,7 +649,11 @@ function getDeterministicDebtReply(message: string, context: AgentContext) {
     const totalOwed = context.balanceSummary.settlements
       .filter((item) => item.payerAccountId === currentUser.id)
       .reduce((sum, item) => sum + item.amount, 0)
-    const parts = [`כרגע אתה חייב בסך הכול ${formatCurrency(totalOwed)}. ${reply}.`]
+    const summary = `כרגע אתה חייב בסך הכול ${formatCurrency(totalOwed)}. ${reply}.`
+    if (!asksForBreakdown) {
+      return summary
+    }
+    const parts = [summary]
     if (drivers?.expensesText) {
       parts.push(`ההוצאות שיצרו את החוב הנוכחי:\n${drivers.expensesText}`)
     }
@@ -946,6 +1060,37 @@ agentRouter.post('/', async (request, response, next) => {
       return
     }
 
+    if (pendingFollowUp && looksLikeRejection(body.message)) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: '\u05d4\u05d1\u05e7\u05e9\u05d4 \u05d1\u05d5\u05d8\u05dc\u05d4.',
+        pendingAction: null,
+      })
+      return
+    }
+
+    const directActionOutput = parseDirectAgentAction(body.message)
+    const directValidatedAction = directActionOutput?.action
+      ? validateAgentAction(directActionOutput.action)
+      : null
+
+    if (directValidatedAction) {
+      const pendingAction = createPendingAgentAction({
+        accountId,
+        apartmentId,
+        action: directValidatedAction,
+      })
+
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply:
+          directActionOutput?.reply?.trim() ||
+          `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?`,
+        pendingAction,
+      })
+      return
+    }
+
     const client = new OpenAI({ apiKey: env.OPENAI_API_KEY })
     const history = (body.history ?? [])
       .slice(-8)
@@ -1057,10 +1202,6 @@ agentRouter.post('/', async (request, response, next) => {
           action: validatedAction,
         })
       : null
-    const rawReplyText =
-      agentOutput.reply ||
-      aiResponse.output_text ||
-      (pendingAction ? `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?` : '')
     const finalReplyText =
       (agentOutput.reply || aiResponseText || '').trim() ||
       (pendingAction
@@ -1106,3 +1247,6 @@ agentRouter.post('/confirm', async (request, response, next) => {
     next(error)
   }
 })
+
+
+

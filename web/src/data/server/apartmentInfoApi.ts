@@ -1,7 +1,7 @@
 import { apiRequest } from '../../lib/api/client'
 import type { ApartmentInfoAttachment, ApartmentInfoItem } from '../../types/models'
 
-interface ApartmentInfoAttachmentApiResponse extends ApartmentInfoAttachment {}
+type ApartmentInfoAttachmentApiResponse = ApartmentInfoAttachment
 
 interface ApartmentInfoItemApiResponse {
   id: number

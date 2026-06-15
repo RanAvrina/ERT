@@ -1,4 +1,5 @@
 import type { PaymentStatus, ShoppingItemStatus, TaskStatus, TicketStatus } from '../types/models'
+import { shoppingItemLabels, taskLabels, ticketLabels } from './statusLabels'
 
 type ChipTone = 'success' | 'warning' | 'danger' | 'muted' | 'primary'
 
@@ -8,6 +9,35 @@ const toneClass: Record<ChipTone, string> = {
   danger: 'chip--danger',
   muted: 'chip--muted',
   primary: 'chip--primary',
+}
+
+const paymentLabels: Record<PaymentStatus, string> = {
+  recorded: 'נרשם',
+  cancelled: 'בוטל',
+}
+
+const paymentTone: Record<PaymentStatus, ChipTone> = {
+  recorded: 'success',
+  cancelled: 'muted',
+}
+
+const taskTone: Record<TaskStatus, ChipTone> = {
+  open: 'primary',
+  in_progress: 'warning',
+  done: 'success',
+  cancelled: 'muted',
+}
+
+const itemTone: Record<ShoppingItemStatus, ChipTone> = {
+  open: 'primary',
+  purchased: 'success',
+  cancelled: 'muted',
+}
+
+const ticketTone: Record<TicketStatus, ChipTone> = {
+  open: 'primary',
+  in_progress: 'warning',
+  closed: 'success',
 }
 
 function getChipClass(tone: ChipTone, clickable = false) {
@@ -50,32 +80,8 @@ export function StatusActionChip({
   )
 }
 
-const paymentLabels: Record<PaymentStatus, string> = {
-  recorded: 'נרשם',
-  cancelled: 'בוטל',
-}
-
-const paymentTone: Record<PaymentStatus, ChipTone> = {
-  recorded: 'success',
-  cancelled: 'muted',
-}
-
 export function PaymentStatusChip({ status }: { status: PaymentStatus }) {
   return <StatusChip label={paymentLabels[status]} tone={paymentTone[status]} />
-}
-
-export const taskLabels: Record<TaskStatus, string> = {
-  open: 'פתוחה',
-  in_progress: 'בביצוע',
-  done: 'בוצעה',
-  cancelled: 'בוטלה',
-}
-
-const taskTone: Record<TaskStatus, ChipTone> = {
-  open: 'primary',
-  in_progress: 'warning',
-  done: 'success',
-  cancelled: 'muted',
 }
 
 export function TaskStatusChip({ status }: { status: TaskStatus }) {
@@ -99,18 +105,6 @@ export function TaskStatusActionChip({
   )
 }
 
-export const shoppingItemLabels: Record<ShoppingItemStatus, string> = {
-  open: 'פתוח',
-  purchased: 'נרכש',
-  cancelled: 'בוטל',
-}
-
-const itemTone: Record<ShoppingItemStatus, ChipTone> = {
-  open: 'primary',
-  purchased: 'success',
-  cancelled: 'muted',
-}
-
 export function ShoppingItemStatusChip({ status }: { status: ShoppingItemStatus }) {
   return <StatusChip label={shoppingItemLabels[status]} tone={itemTone[status]} />
 }
@@ -130,18 +124,6 @@ export function ShoppingItemStatusActionChip({
       title="שינוי סטטוס פריט"
     />
   )
-}
-
-export const ticketLabels: Record<TicketStatus, string> = {
-  open: 'פתוח',
-  in_progress: 'בטיפול',
-  closed: 'סגור',
-}
-
-const ticketTone: Record<TicketStatus, ChipTone> = {
-  open: 'primary',
-  in_progress: 'warning',
-  closed: 'success',
 }
 
 export function TicketStatusChip({ status }: { status: TicketStatus }) {
