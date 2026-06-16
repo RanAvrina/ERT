@@ -257,6 +257,312 @@ function parseDirectAgentAction(message: string) {
   return parseDirectExpenseAction(message) ?? parseDirectShoppingAction(message)
 }
 
+function extractMentionedRoommateNames(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  return [...context.roommates]
+    .sort((left, right) => right.name.length - left.name.length)
+    .filter((roommate) => normalizedMessage.includes(normalizeText(roommate.name)))
+    .map((roommate) => roommate.name)
+}
+
+function parseContextualExpenseAction(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  const amount = parseAmountFromMessage(message)
+  if (!amount) return null
+
+  const looksLikeExpenseAction =
+    (normalizedMessage.includes('הוצאה') ||
+      normalizedMessage.includes('תוסיף') ||
+      normalizedMessage.includes('תרשום') ||
+      normalizedMessage.includes('תכניס')) &&
+    (normalizedMessage.includes('תחלק') || normalizedMessage.includes('בין'))
+
+  if (!looksLikeExpenseAction) return null
+
+  const descriptionMatch =
+    message.match(/על\s+(.+?)(?:\s+ותחלק|\s+ותחלקי|\s+בין\s+|$)/i) ??
+    message.match(/הוצאה\s+(?:של\s+)?(.+?)(?:\s+בסך|\s+\d+(?:[.,]\d+)?\s*(?:שקל(?:ים)?|ש["״]?ח)|\s+בין\s+|\s+ותחלק|$)/i)
+
+  const description = descriptionMatch?.[1]?.trim() ?? 'הוצאה חדשה'
+  if (!description) return null
+
+  const splitBetweenEveryone =
+    normalizedMessage.includes('בין כולם') ||
+    normalizedMessage.includes('בין כל הדיירים') ||
+    normalizedMessage.includes('שווה בשווה')
+
+  const participantNames = splitBetweenEveryone
+    ? null
+    : extractMentionedRoommateNames(message, context)
+
+  if (!splitBetweenEveryone && normalizedMessage.includes('בין') && !participantNames?.length) {
+    return null
+  }
+
+  const participantSummary = participantNames?.length ? ` (${participantNames.join(', ')})` : ''
+
+  return {
+    reply: `זיהיתי בקשה להוסיף הוצאה של ${amount} ש"ח עבור ${description}${participantSummary}. לאשר?`,
+    action: {
+      type: 'create_expense',
+      payload: {
+        description,
+        amount,
+        category: description,
+        date: null,
+        paidByName: null,
+        participantNames: participantNames?.length ? participantNames : null,
+      },
+    },
+  }
+}
+
+function parseContextualShoppingAction(message: string) {
+  const normalizedMessage = normalizeText(message)
+  const looksLikeShoppingAction =
+    (normalizedMessage.includes('רשימת קניות') ||
+      normalizedMessage.includes('לקניות') ||
+      normalizedMessage.includes('לקנות')) &&
+    (normalizedMessage.includes('תוסיף') ||
+      normalizedMessage.includes('תרשום') ||
+      normalizedMessage.includes('תכניס') ||
+      normalizedMessage.includes('תוסיף לי'))
+
+  if (!looksLikeShoppingAction) return null
+
+  const commandBody = normalizeText(
+    message
+      .replace(/^(?:\u05ea\u05d5\u05e1\u05d9\u05e3|\u05ea\u05e8\u05e9\u05d5\u05dd|\u05ea\u05db\u05e0\u05d9\u05e1)\s+/u, '')
+      .replace(/^\u05dc\u05d9\s+/u, ''),
+  )
+
+  const patterns = [
+    /^(?<item>.+?)\s+(?<quantity>\d+(?:[.,]\d+)?)\s+\u05dc\u05e8\u05e9\u05d9\u05de\u05ea\s+\u05e7\u05e0\u05d9\u05d5\u05ea$/u,
+    /^(?<item>.+?)\s+\u05dc\u05e8\u05e9\u05d9\u05de\u05ea\s+\u05e7\u05e0\u05d9\u05d5\u05ea\s+(?<quantity>\d+(?:[.,]\d+)?)$/u,
+    /^(?<item>.+?)\s+(?<quantity>\d+(?:[.,]\d+)?)\s+\u05dc\u05e7\u05e0\u05d9\u05d5\u05ea$/u,
+    /^(?<item>.+?)\s+\u05dc\u05e7\u05e0\u05d9\u05d5\u05ea\s+(?<quantity>\d+(?:[.,]\d+)?)$/u,
+    /^(?<item>.+?)\s+\u05dc\u05e8\u05e9\u05d9\u05de\u05ea\s+\u05e7\u05e0\u05d9\u05d5\u05ea$/u,
+    /^(?<item>.+?)\s+\u05dc\u05e7\u05e0\u05d9\u05d5\u05ea$/u,
+    /^(?<item>.+?)\s+\u05dc\u05e7\u05e0\u05d5\u05ea$/u,
+  ]
+
+  const matched = patterns.map((pattern) => commandBody.match(pattern)).find(Boolean)
+  const itemName = matched?.groups?.item?.trim() ?? null
+  const quantity = matched?.groups?.quantity?.trim() ?? null
+  if (!itemName) return null
+
+  return {
+    reply: `זיהיתי בקשה להוסיף פריט קניות: ${itemName}${quantity ? `, כמות ${quantity}` : ''}. לאשר?`,
+    action: {
+      type: 'create_shopping_item',
+      payload: {
+        itemName,
+        quantity,
+        category: null,
+      },
+    },
+  }
+}
+
+function parseContextualTaskAction(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  const looksLikeTaskAction =
+    (normalizedMessage.includes('מטלה') || normalizedMessage.includes('משימה')) &&
+    (normalizedMessage.includes('תוסיף') ||
+      normalizedMessage.includes('תפתח') ||
+      normalizedMessage.includes('תיצור') ||
+      normalizedMessage.includes('תרשום'))
+
+  if (!looksLikeTaskAction) return null
+
+  const titleMatch =
+    message.match(/(?:מטלה|משימה)\s+(?:של\s+)?(.+?)(?:\s+ל(?:רן|דוד|יוני)|\s+עד\s+|$)/i) ??
+    message.match(/(?:תוסיף|תפתח|תיצור|תרשום)\s+(?:לי\s+)?(?:מטלה|משימה)\s+(.+?)(?:\s+ל(?:רן|דוד|יוני)|\s+עד\s+|$)/i)
+
+  const title = titleMatch?.[1]?.trim()
+  if (!title) return null
+
+  const assigneeName = extractMentionedRoommateNames(message, context)[0] ?? null
+
+  return {
+    reply: `זיהיתי בקשה לפתוח מטלה: ${title}${assigneeName ? ` עבור ${assigneeName}` : ''}. לאשר?`,
+    action: {
+      type: 'create_task',
+      payload: {
+        title,
+        taskType: 'other',
+        targetItemName: undefined,
+        description: null,
+        assigneeName,
+        dueDate: null,
+      },
+    },
+  }
+}
+
+function parseContextualTicketAction(message: string) {
+  const normalizedMessage = normalizeText(message)
+  const looksLikeTicketAction =
+    (normalizedMessage.includes('פניה') ||
+      normalizedMessage.includes('תקלה') ||
+      normalizedMessage.includes('בקשה')) &&
+    (normalizedMessage.includes('תפתח') ||
+      normalizedMessage.includes('פתח') ||
+      normalizedMessage.includes('תיצור') ||
+      normalizedMessage.includes('תרשום'))
+
+  if (!looksLikeTicketAction) return null
+
+  const titleMatch =
+    message.match(/(?:פניה|תקלה|בקשה)\s+(?:על\s+)?(.+)$/i) ??
+    message.match(/(?:תפתח|פתח|תיצור|תרשום)\s+(?:לי\s+)?(?:פניה|תקלה|בקשה)\s+(?:על\s+)?(.+)$/i)
+
+  const title = titleMatch?.[1]?.trim()
+  if (!title) return null
+
+  const category = normalizedMessage.includes('חשבון') || normalizedMessage.includes('תשלום')
+    ? 'finance'
+    : normalizedMessage.includes('בקשה')
+      ? 'request'
+      : 'issue'
+
+  return {
+    reply: `זיהיתי בקשה לפתוח פנייה: ${title}. לאשר?`,
+    action: {
+      type: 'create_ticket',
+      payload: {
+        title,
+        description: title,
+        category,
+      },
+    },
+  }
+}
+
+function extractFirstMatchingTaskTitle(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  return [...context.tasks]
+    .sort((left, right) => right.title.length - left.title.length)
+    .find((task) => normalizedMessage.includes(normalizeText(task.title)))
+    ?.title
+}
+
+function parseContextualCancelShoppingAction(message: string) {
+  const normalizedMessage = normalizeText(message)
+  const looksLikeCancel =
+    normalizedMessage.includes('תבטל') ||
+    normalizedMessage.includes('תמחק') ||
+    normalizedMessage.includes('תסיר') ||
+    normalizedMessage.includes('תוריד')
+
+  const looksLikeShopping =
+    normalizedMessage.includes('קניות') ||
+    normalizedMessage.includes('רשימת קניות') ||
+    normalizedMessage.includes('לקנות')
+
+  if (!looksLikeCancel || !looksLikeShopping) return null
+
+  const itemMatch =
+    message.match(/(?:תבטל|תמחק|תסיר|תוריד)\s+(?:את\s+)?(?:הפריט\s+)?(.+?)(?:\s+מרשימת\s+הקניות|\s+מהקניות|\s+מהרשימה|$)/i)
+
+  const itemName = itemMatch?.[1]?.trim()
+  if (!itemName) return null
+
+  return {
+    reply: `זיהיתי בקשה לבטל את פריט הקניות ${itemName}. לאשר?`,
+    action: {
+      type: 'cancel_shopping_items',
+      payload: {
+        itemName,
+        mode: normalizedMessage.includes('הכל') || normalizedMessage.includes('כל') ? 'all_matching' : 'single_latest',
+      },
+    },
+  }
+}
+
+function parseContextualTaskStatusAction(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  const taskTitle = extractFirstMatchingTaskTitle(message, context)
+  if (!taskTitle) return null
+
+  const status =
+    normalizedMessage.includes('הושלם') ||
+    normalizedMessage.includes('הושלמה') ||
+    normalizedMessage.includes('בוצע') ||
+    normalizedMessage.includes('בוצעה') ||
+    normalizedMessage.includes('סיים') ||
+    normalizedMessage.includes('סגור')
+      ? 'done'
+      : normalizedMessage.includes('בביצוע') || normalizedMessage.includes('בתהליך')
+        ? 'in_progress'
+        : normalizedMessage.includes('בטל') || normalizedMessage.includes('מבוטל')
+          ? 'cancelled'
+          : normalizedMessage.includes('פתח') || normalizedMessage.includes('פתוח')
+            ? 'open'
+            : null
+
+  if (!status) return null
+
+  return {
+    reply: `זיהיתי בקשה לעדכן את הסטטוס של המטלה ${taskTitle}. לאשר?`,
+    action: {
+      type: 'update_task_status',
+      payload: {
+        taskTitle,
+        status,
+      },
+    },
+  }
+}
+
+function parseContextualTaskDueDateAction(message: string, context: AgentContext) {
+  const normalizedMessage = normalizeText(message)
+  const taskTitle = extractFirstMatchingTaskTitle(message, context)
+  if (!taskTitle) return null
+
+  if (!normalizedMessage.includes('תאריך') && !normalizedMessage.includes('יעד') && !normalizedMessage.includes('עד ')) {
+    return null
+  }
+
+  const isoDateMatch = message.match(/\b(\d{4}-\d{2}-\d{2})\b/)
+  const shortDateMatch = message.match(/\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b/)
+
+  let dueDate: string | null = null
+  if (isoDateMatch) {
+    dueDate = isoDateMatch[1]
+  } else if (shortDateMatch) {
+    const day = shortDateMatch[1].padStart(2, '0')
+    const month = shortDateMatch[2].padStart(2, '0')
+    const year = shortDateMatch[3]
+    dueDate = `${year}-${month}-${day}`
+  }
+
+  if (!dueDate) return null
+
+  return {
+    reply: `זיהיתי בקשה לעדכן את תאריך היעד של המטלה ${taskTitle} ל-${formatDate(dueDate)}. לאשר?`,
+    action: {
+      type: 'update_task_due_date',
+      payload: {
+        taskTitle,
+        dueDate,
+      },
+    },
+  }
+}
+
+function parseContextualWriteAction(message: string, context: AgentContext) {
+  return (
+    parseContextualExpenseAction(message, context) ??
+    parseContextualShoppingAction(message) ??
+    parseContextualCancelShoppingAction(message) ??
+    parseContextualTaskStatusAction(message, context) ??
+    parseContextualTaskDueDateAction(message, context) ??
+    parseContextualTaskAction(message, context) ??
+    parseContextualTicketAction(message)
+  )
+}
+
 function requireActiveApartment(request: Express.Request) {
   const membership = request.auth?.membership
   if (!membership || membership.status !== 'active') {
@@ -268,6 +574,32 @@ function requireActiveApartment(request: Express.Request) {
 
 function normalizeText(value: string) {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+function normalizeAgentMessage(value: string) {
+  let normalized = normalizeText(value)
+
+  const replacements: Array<[RegExp, string]> = [
+    [/\bכסך\b/gu, 'כסף'],
+    [/\bשלצתי\b/gu, 'שילמתי'],
+    [/\bשלמתי\b/gu, 'שילמתי'],
+    [/\bשלמתי\b/gu, 'שילמתי'],
+    [/\bמטלטות\b/gu, 'מטלות'],
+    [/\bמטלטה\b/gu, 'מטלה'],
+    [/\bהמצבב\b/gu, 'המצב'],
+    [/\bהמצב\s+בדירהה\b/gu, 'המצב בדירה'],
+    [/\bחשמלל\b/gu, 'חשמל'],
+    [/\bמיים\b/gu, 'מים'],
+    [/\bתשלומיםם\b/gu, 'תשלומים'],
+    [/\bקנייות\b/gu, 'קניות'],
+    [/\bשלחתי\b/gu, 'שילמתי'],
+  ]
+
+  for (const [pattern, replacement] of replacements) {
+    normalized = normalized.replace(pattern, replacement)
+  }
+
+  return normalizeText(normalized)
 }
 
 function includesHebrew(source: string, needle: string) {
@@ -758,6 +1090,151 @@ function executeReadTool(context: AgentContext, toolName: ReadToolName, rawArgs?
         args: { query, limit },
         result: items.slice(0, limit),
       }
+    }
+  }
+}
+
+function buildToolReplyFallback(
+  toolName: ReadToolName,
+  toolData: ReturnType<typeof executeReadTool>,
+  context: AgentContext,
+  message: string,
+) {
+  const normalizedMessage = normalizeText(message)
+  const asksForBreakdown =
+    normalizedMessage.includes('תפרט') ||
+    normalizedMessage.includes('פירוט') ||
+    normalizedMessage.includes('כולל') ||
+    normalizedMessage.includes('על מה')
+
+  switch (toolName) {
+    case 'get_balances': {
+      const currentUser = context.user
+      if (!currentUser) return 'לא הצלחתי לזהות את המשתמש המחובר.'
+
+      const userOwes = context.balanceSummary.settlements.filter(
+        (item) => item.payerAccountId === currentUser.id,
+      )
+      const owedToUser = context.balanceSummary.settlements.filter(
+        (item) => item.payeeAccountId === currentUser.id,
+      )
+
+      const asksUserOwes =
+        normalizedMessage.includes('למי אני חייב') ||
+        normalizedMessage.includes('אני חייב') ||
+        normalizedMessage.includes('כמה אני חייב')
+
+      if (asksUserOwes) {
+        if (!userOwes.length) return 'לא. לפי המאזן הנוכחי אתה לא חייב כרגע כסף לאף אחד.'
+        const details = userOwes.map((item) => `${item.payeeName} ${formatCurrency(item.amount)}`).join(', ')
+        return `כן. כרגע אתה חייב בסך הכול ${formatCurrency(userOwes.reduce((sum, item) => sum + item.amount, 0))}. ${details}.`
+      }
+
+      if (!owedToUser.length) return 'לפי המאזן הנוכחי כרגע אף אחד לא חייב לך כסף.'
+      const details = owedToUser.map((item) => `${item.payerName} ${formatCurrency(item.amount)}`).join(', ')
+      return `כרגע חייבים לך בסך הכול ${formatCurrency(owedToUser.reduce((sum, item) => sum + item.amount, 0))}. ${details}.`
+    }
+
+    case 'get_tasks': {
+      const tasks = toolData.result as AgentContext['tasks']
+      if (!tasks.length) return normalizedMessage.includes('שלי') ? 'כרגע אין לך מטלות פתוחות.' : 'כרגע אין מטלות תואמות.'
+      const details = tasks
+        .slice(0, 8)
+        .map((task) => `- ${task.title}${task.dueDate ? ` · יעד: ${formatDate(task.dueDate)}` : ''}`)
+        .join('\n')
+      return `אלו המטלות כרגע:\n${details}`
+    }
+
+    case 'get_task_summary': {
+      const summary = toolData.result as {
+        myOpenTasks: number
+        myInProgressTasks: number
+        overdueTasks: number
+        totalOpenTasks: number
+      }
+      return `כרגע יש לך ${summary.myOpenTasks} מטלות פתוחות ו-${summary.myInProgressTasks} בביצוע. בדירה יש ${summary.totalOpenTasks} מטלות פתוחות בסך הכול, ומתוכן ${summary.overdueTasks} באיחור.`
+    }
+
+    case 'get_expenses': {
+      const expenses = toolData.result as AgentContext['expenses']
+      if (!expenses.length) return 'לא מצאתי הוצאות תואמות כרגע.'
+      const details = expenses
+        .slice(0, asksForBreakdown ? 12 : 6)
+        .map((expense) => `- ${expense.description} (${formatDate(expense.date)}): ${formatCurrency(Number(expense.amount))}${expense.paidByName ? ` · שילם ${expense.paidByName}` : ''}`)
+        .join('\n')
+      return `אלו ההוצאות שמצאתי:\n${details}`
+    }
+
+    case 'get_payments': {
+      const payments = toolData.result as AgentContext['payments']
+      if (!payments.length) return 'לא מצאתי תשלומים תואמים כרגע.'
+      const details = payments
+        .slice(0, asksForBreakdown ? 12 : 6)
+        .map((payment) => `- ${payment.payerName} → ${payment.payeeName}, ${formatCurrency(Number(payment.amount))} (${formatDate(payment.date)})`)
+        .join('\n')
+      return `אלו התשלומים שמצאתי:\n${details}`
+    }
+
+    case 'get_apartment_summary': {
+      const summary = toolData.result as {
+        apartment: string
+        today: string
+        openTasks: number
+        inProgressTasks: number
+        openShoppingItems: number
+        openTickets: number
+        latestExpenses: AgentContext['expenses']
+      }
+      return `כרגע בדירה יש ${summary.openTasks} מטלות פתוחות, ${summary.inProgressTasks} מטלות בביצוע, ${summary.openShoppingItems} פריטי קניות פתוחים ו-${summary.openTickets} פניות פתוחות.`
+    }
+
+    case 'get_shopping_items': {
+      const items = toolData.result as AgentContext['shoppingItems']
+      if (!items.length) return 'כרגע אין פריטי קניות תואמים.'
+      const details = items
+        .slice(0, 10)
+        .map((item) => `- ${item.name}${item.quantity ? ` · כמות: ${item.quantity}` : ''}`)
+        .join('\n')
+      return `אלו הפריטים ברשימה:\n${details}`
+    }
+
+    case 'get_tickets': {
+      const tickets = toolData.result as AgentContext['tickets']
+      if (!tickets.length) return 'כרגע אין פניות תואמות.'
+      const details = tickets
+        .slice(0, 8)
+        .map((ticket) => `- ${ticket.title}${ticket.category ? ` · ${ticket.category}` : ''}${ticket.status ? ` · ${ticket.status}` : ''}`)
+        .join('\n')
+      return `אלו הפניות שמצאתי:\n${details}`
+    }
+
+    case 'get_apartment_info': {
+      const items = toolData.result as AgentContext['apartmentInfoItems']
+      if (!items.length) return 'לא מצאתי מידע תואם על הדירה.'
+      const details = items
+        .slice(0, asksForBreakdown ? 8 : 4)
+        .map((item) => {
+          const parts = [
+            item.title,
+            item.provider ? `ספק: ${item.provider}` : null,
+            item.meterNumber ? `מונה: ${item.meterNumber}` : null,
+            item.accountNumber ? `חשבון: ${item.accountNumber}` : null,
+            item.phone ? `טלפון: ${item.phone}` : null,
+          ].filter(Boolean)
+          return `- ${parts.join(' · ')}`
+        })
+        .join('\n')
+      return `זה המידע שמצאתי:\n${details}`
+    }
+
+    case 'get_home_items': {
+      const items = toolData.result as AgentContext['homeItems']
+      if (!items.length) return 'לא מצאתי פריטים תואמים בדירה.'
+      const details = items
+        .slice(0, 10)
+        .map((item) => `- ${item.name} · אזור: ${item.area}${item.defaultNote ? ` · ${item.defaultNote}` : ''}`)
+        .join('\n')
+      return `אלו הפריטים שמצאתי:\n${details}`
     }
   }
 }
@@ -1524,6 +2001,7 @@ agentRouter.post('/', async (request, response, next) => {
     const body = validateBody(queryBodySchema, request.body)
     const apartmentId = requireActiveApartment(request)
     const accountId = request.auth!.account.id
+    const normalizedUserMessage = normalizeAgentMessage(body.message)
     logAgentEvent('request_start', {
       accountId,
       apartmentId,
@@ -1532,14 +2010,17 @@ agentRouter.post('/', async (request, response, next) => {
       hasHistory: Boolean(body.history?.length),
     })
     const context = await buildAgentContext(apartmentId, accountId)
-    const deterministicDebtReply = getDeterministicDebtReply(body.message, context)
-    const deterministicOperationsReply = getDeterministicOperationsReply(body.message, context)
-    const deterministicApartmentInfoReply = getDeterministicApartmentInfoReply(body.message, context)
-    const deterministicExpenseSummaryReply = getDeterministicExpenseSummaryReply(body.message, context)
-    const deterministicTodayReply = getDeterministicTodayReply(body.message, context)
+    const deterministicDebtReply = getDeterministicDebtReply(normalizedUserMessage, context)
+    const deterministicOperationsReply = getDeterministicOperationsReply(normalizedUserMessage, context)
+    const deterministicApartmentInfoReply = getDeterministicApartmentInfoReply(normalizedUserMessage, context)
+    const deterministicExpenseSummaryReply = getDeterministicExpenseSummaryReply(
+      normalizedUserMessage,
+      context,
+    )
+    const deterministicTodayReply = getDeterministicTodayReply(normalizedUserMessage, context)
     const pendingFollowUp = getPendingAgentFollowUp(accountId, apartmentId)
 
-    if (pendingFollowUp && looksLikeRejection(body.message)) {
+    if (pendingFollowUp && looksLikeRejection(normalizedUserMessage)) {
       clearPendingAgentFollowUp(accountId, apartmentId)
       response.json({
         reply: '\u05d4\u05d1\u05e7\u05e9\u05d4 \u05d1\u05d5\u05d8\u05dc\u05d4.',
@@ -1548,7 +2029,7 @@ agentRouter.post('/', async (request, response, next) => {
       return
     }
 
-    const directActionOutput = parseDirectAgentAction(body.message)
+    const directActionOutput = parseDirectAgentAction(normalizedUserMessage)
     const directValidatedAction = directActionOutput?.action
       ? validateAgentAction(directActionOutput.action)
       : null
@@ -1577,7 +2058,7 @@ agentRouter.post('/', async (request, response, next) => {
       .join('\n')
     const openAIContext = buildScopedOpenAIContext(
       context,
-      body.message,
+      normalizedUserMessage,
       pendingFollowUp?.originalMessage,
     )
 
@@ -1618,10 +2099,13 @@ agentRouter.post('/', async (request, response, next) => {
       input: [
         `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
         pendingFollowUp
-          ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${body.message}`
+          ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${normalizedUserMessage}`
           : '',
         history ? `Conversation history:\n${history}` : '',
         `User message: ${body.message}`,
+        normalizedUserMessage !== body.message
+          ? `Normalized user message: ${normalizedUserMessage}`
+          : '',
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -1647,11 +2131,33 @@ agentRouter.post('/', async (request, response, next) => {
       return
     }
 
+    const contextualActionOutput = parseContextualWriteAction(normalizedUserMessage, context)
+    const contextualValidatedAction = contextualActionOutput?.action
+      ? validateAgentAction(contextualActionOutput.action)
+      : null
+
+    if (contextualValidatedAction) {
+      const pendingAction = createPendingAgentAction({
+        accountId,
+        apartmentId,
+        action: contextualValidatedAction,
+      })
+
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply:
+          contextualActionOutput?.reply?.trim() ||
+          `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?`,
+        pendingAction,
+      })
+      return
+    }
+
     if (plannerOutput?.mode === 'ask' && plannerOutput.reply) {
       storePendingAgentFollowUp({
         accountId,
         apartmentId,
-        originalMessage: pendingFollowUp?.originalMessage ?? body.message,
+        originalMessage: pendingFollowUp?.originalMessage ?? normalizedUserMessage,
         latestAssistantQuestion: plannerOutput.reply.trim(),
       })
       response.json({
@@ -1663,7 +2169,7 @@ agentRouter.post('/', async (request, response, next) => {
 
     if (plannerOutput?.mode === 'tool' && plannerOutput.tool) {
       const toolData = executeReadTool(context, plannerOutput.tool.name, plannerOutput.tool.args)
-      const toolReply = await buildNaturalToolReply(
+      const llmToolReply = await buildNaturalToolReply(
         client,
         env.OPENAI_MODEL,
         body.message,
@@ -1671,12 +2177,14 @@ agentRouter.post('/', async (request, response, next) => {
         plannerOutput.tool.name,
         toolData,
       )
+      const toolReply =
+        llmToolReply || buildToolReplyFallback(plannerOutput.tool.name, toolData, context, body.message)
       logAgentEvent('planner_tool_reply', {
         accountId,
         apartmentId,
         tool: plannerOutput.tool.name,
         hasToolReply: Boolean(toolReply),
-        toolReply: truncateForLog(toolReply, 220),
+        toolReply: truncateForLog(toolReply ?? '', 220),
       })
       if (toolReply) {
         clearPendingAgentFollowUp(accountId, apartmentId)
@@ -1712,13 +2220,13 @@ agentRouter.post('/', async (request, response, next) => {
 
     const heuristicToolRequest = inferHeuristicReadToolRequest(
       pendingFollowUp?.originalMessage
-        ? `${pendingFollowUp.originalMessage} ${body.message}`
-        : body.message,
+        ? `${normalizeAgentMessage(pendingFollowUp.originalMessage)} ${normalizedUserMessage}`
+        : normalizedUserMessage,
       context,
       [
         pendingFollowUp?.originalMessage ?? '',
         history,
-        body.message,
+        normalizedUserMessage,
       ]
         .filter(Boolean)
         .join(' '),
@@ -1732,7 +2240,7 @@ agentRouter.post('/', async (request, response, next) => {
 
     if (heuristicToolRequest) {
       const toolData = executeReadTool(context, heuristicToolRequest.name, heuristicToolRequest.args)
-      const toolReply = await buildNaturalToolReply(
+      const llmToolReply = await buildNaturalToolReply(
         client,
         env.OPENAI_MODEL,
         body.message,
@@ -1740,12 +2248,14 @@ agentRouter.post('/', async (request, response, next) => {
         heuristicToolRequest.name,
         toolData,
       )
+      const toolReply =
+        llmToolReply || buildToolReplyFallback(heuristicToolRequest.name, toolData, context, body.message)
       logAgentEvent('heuristic_tool_reply', {
         accountId,
         apartmentId,
         tool: heuristicToolRequest.name,
         hasToolReply: Boolean(toolReply),
-        toolReply: truncateForLog(toolReply, 220),
+        toolReply: truncateForLog(toolReply ?? '', 220),
       })
 
       if (toolReply) {
@@ -1810,18 +2320,21 @@ agentRouter.post('/', async (request, response, next) => {
         'If the user asks why they owe money or who owes them money, explain based on balanceSummary and the actual expenses/payments context, not with a generic answer. ' +
         'If required information is missing, ask a short follow-up question and do not return an action.',
       input: [
-        `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
-        pendingFollowUp
-          ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${body.message}\nUser continuation type: ${
-              looksLikeAffirmation(body.message)
+          `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
+          pendingFollowUp
+            ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${normalizedUserMessage}\nUser continuation type: ${
+              looksLikeAffirmation(normalizedUserMessage)
                 ? 'affirmative confirmation'
-                : looksLikeRejection(body.message)
+                : looksLikeRejection(normalizedUserMessage)
                   ? 'rejection'
                   : 'additional information'
             }`
           : '',
         history ? `Conversation history:\n${history}` : '',
         `User message: ${body.message}`,
+        normalizedUserMessage !== body.message
+          ? `Normalized user message: ${normalizedUserMessage}`
+          : '',
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -1831,7 +2344,7 @@ agentRouter.post('/', async (request, response, next) => {
     let agentOutput = parseAgentOutput(aiResponseText)
     let validatedAction = agentOutput.action ? validateAgentAction(agentOutput.action) : null
 
-    if (pendingFollowUp && looksLikeAffirmation(body.message) && !validatedAction) {
+    if (pendingFollowUp && looksLikeAffirmation(normalizedUserMessage) && !validatedAction) {
       const confirmationResponse = await client.responses.create({
         model: env.OPENAI_MODEL,
         max_output_tokens: 220,
@@ -1853,6 +2366,9 @@ agentRouter.post('/', async (request, response, next) => {
           `Original user request: ${pendingFollowUp.originalMessage}`,
           `Assistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}`,
           `User confirmation: ${body.message}`,
+          normalizedUserMessage !== body.message
+            ? `Normalized user confirmation: ${normalizedUserMessage}`
+            : '',
         ].join('\n\n'),
       })
 
@@ -1886,10 +2402,13 @@ agentRouter.post('/', async (request, response, next) => {
         input: [
           `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
           pendingFollowUp
-            ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${body.message}`
+            ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${normalizedUserMessage}`
             : '',
           history ? `Conversation history:\n${history}` : '',
           `User message: ${body.message}`,
+          normalizedUserMessage !== body.message
+            ? `Normalized user message: ${normalizedUserMessage}`
+            : '',
         ]
           .filter(Boolean)
           .join('\n\n'),
@@ -1929,7 +2448,7 @@ agentRouter.post('/', async (request, response, next) => {
       storePendingAgentFollowUp({
         accountId,
         apartmentId,
-        originalMessage: pendingFollowUp?.originalMessage ?? body.message,
+        originalMessage: pendingFollowUp?.originalMessage ?? normalizedUserMessage,
         latestAssistantQuestion: finalReplyText,
       })
     } else {
