@@ -136,6 +136,19 @@ function extractResponseText(response: unknown) {
     .trim()
 }
 
+function truncateForLog(value: string, maxLength = 180) {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength)}...`
+}
+
+function logAgentEvent(event: string, details: Record<string, unknown>) {
+  console.log('[agent]', {
+    event,
+    ...details,
+  })
+}
+
 function hasMeaningfulAgentReply(
   reply: string | undefined,
   action: unknown,
@@ -174,8 +187,11 @@ function parseDirectShoppingAction(message: string) {
   if (!rawValue) return null
 
   const quantityMatch = rawValue.match(/(.+?)\s+(\d+(?:[.,]\d+)?)$/)
-  const itemName = quantityMatch?.[1]?.trim() ?? rawValue
-  const quantity = quantityMatch?.[2]?.trim() ?? null
+  const trailingQuantityMatch = message.match(
+    /(?:\u05dc\u05e8\u05e9\u05d9\u05de\u05ea\s+\u05e7\u05e0\u05d9\u05d5\u05ea|\u05dc\u05e7\u05e0\u05d9\u05d5\u05ea|\u05dc\u05e7\u05e0\u05d5\u05ea)\s+(\d+(?:[.,]\d+)?)$/u,
+  )
+  const itemName = (quantityMatch?.[1]?.trim() ?? rawValue).replace(/^\u05dc\u05d9\s+/u, '').trim()
+  const quantity = quantityMatch?.[2]?.trim() ?? trailingQuantityMatch?.[1]?.trim() ?? null
 
   if (!itemName) return null
 
@@ -1508,6 +1524,13 @@ agentRouter.post('/', async (request, response, next) => {
     const body = validateBody(queryBodySchema, request.body)
     const apartmentId = requireActiveApartment(request)
     const accountId = request.auth!.account.id
+    logAgentEvent('request_start', {
+      accountId,
+      apartmentId,
+      model: env.OPENAI_MODEL,
+      message: truncateForLog(body.message),
+      hasHistory: Boolean(body.history?.length),
+    })
     const context = await buildAgentContext(apartmentId, accountId)
     const deterministicDebtReply = getDeterministicDebtReply(body.message, context)
     const deterministicOperationsReply = getDeterministicOperationsReply(body.message, context)
@@ -1606,6 +1629,14 @@ agentRouter.post('/', async (request, response, next) => {
 
     const plannerText = extractResponseText(plannerResponse)
     const plannerOutput = tryParsePlannerResponse(plannerText)
+    logAgentEvent('planner_result', {
+      accountId,
+      apartmentId,
+      message: truncateForLog(body.message),
+      plannerMode: plannerOutput?.mode ?? null,
+      plannerTool: plannerOutput?.tool?.name ?? null,
+      plannerReply: truncateForLog(plannerOutput?.reply ?? plannerText ?? '', 220),
+    })
 
     if (plannerOutput?.mode === 'answer' && plannerOutput.reply) {
       clearPendingAgentFollowUp(accountId, apartmentId)
@@ -1640,6 +1671,13 @@ agentRouter.post('/', async (request, response, next) => {
         plannerOutput.tool.name,
         toolData,
       )
+      logAgentEvent('planner_tool_reply', {
+        accountId,
+        apartmentId,
+        tool: plannerOutput.tool.name,
+        hasToolReply: Boolean(toolReply),
+        toolReply: truncateForLog(toolReply, 220),
+      })
       if (toolReply) {
         clearPendingAgentFollowUp(accountId, apartmentId)
         response.json({
@@ -1672,6 +1710,54 @@ agentRouter.post('/', async (request, response, next) => {
       return
     }
 
+    const heuristicToolRequest = inferHeuristicReadToolRequest(
+      pendingFollowUp?.originalMessage
+        ? `${pendingFollowUp.originalMessage} ${body.message}`
+        : body.message,
+      context,
+      [
+        pendingFollowUp?.originalMessage ?? '',
+        history,
+        body.message,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    )
+    logAgentEvent('heuristic_tool_result', {
+      accountId,
+      apartmentId,
+      message: truncateForLog(body.message),
+      heuristicTool: heuristicToolRequest?.name ?? null,
+    })
+
+    if (heuristicToolRequest) {
+      const toolData = executeReadTool(context, heuristicToolRequest.name, heuristicToolRequest.args)
+      const toolReply = await buildNaturalToolReply(
+        client,
+        env.OPENAI_MODEL,
+        body.message,
+        history,
+        heuristicToolRequest.name,
+        toolData,
+      )
+      logAgentEvent('heuristic_tool_reply', {
+        accountId,
+        apartmentId,
+        tool: heuristicToolRequest.name,
+        hasToolReply: Boolean(toolReply),
+        toolReply: truncateForLog(toolReply, 220),
+      })
+
+      if (toolReply) {
+        clearPendingAgentFollowUp(accountId, apartmentId)
+        response.json({
+          reply: toolReply,
+          pendingAction: null,
+        })
+        return
+      }
+    }
+
     const deterministicReply =
       deterministicDebtReply ||
       deterministicOperationsReply ||
@@ -1686,41 +1772,6 @@ agentRouter.post('/', async (request, response, next) => {
         pendingAction: null,
       })
       return
-    }
-
-    const heuristicToolRequest = inferHeuristicReadToolRequest(
-      pendingFollowUp?.originalMessage
-        ? `${pendingFollowUp.originalMessage} ${body.message}`
-        : body.message,
-      context,
-      [
-        pendingFollowUp?.originalMessage ?? '',
-        history,
-        body.message,
-      ]
-        .filter(Boolean)
-        .join(' '),
-    )
-
-    if (heuristicToolRequest) {
-      const toolData = executeReadTool(context, heuristicToolRequest.name, heuristicToolRequest.args)
-      const toolReply = await buildNaturalToolReply(
-        client,
-        env.OPENAI_MODEL,
-        body.message,
-        history,
-        heuristicToolRequest.name,
-        toolData,
-      )
-
-      if (toolReply) {
-        clearPendingAgentFollowUp(accountId, apartmentId)
-        response.json({
-          reply: toolReply,
-          pendingAction: null,
-        })
-        return
-      }
     }
 
     const aiResponse = await client.responses.create({
@@ -1817,6 +1868,11 @@ agentRouter.post('/', async (request, response, next) => {
     }
 
     if (!hasMeaningfulAgentReply(agentOutput.reply, agentOutput.action, validatedAction)) {
+      logAgentEvent('fallback_freeform_start', {
+        accountId,
+        apartmentId,
+        message: truncateForLog(body.message),
+      })
       const fallbackResponse = await client.responses.create({
         model: env.OPENAI_MODEL,
         max_output_tokens: 260,
@@ -1840,6 +1896,12 @@ agentRouter.post('/', async (request, response, next) => {
       })
 
       const fallbackReply = extractResponseText(fallbackResponse).trim()
+      logAgentEvent('fallback_freeform_result', {
+        accountId,
+        apartmentId,
+        hasFallbackReply: Boolean(fallbackReply),
+        fallbackReply: truncateForLog(fallbackReply, 220),
+      })
       if (fallbackReply) {
         agentOutput = {
           ...agentOutput,
@@ -1873,6 +1935,13 @@ agentRouter.post('/', async (request, response, next) => {
     } else {
       clearPendingAgentFollowUp(accountId, apartmentId)
     }
+
+    logAgentEvent('request_complete', {
+      accountId,
+      apartmentId,
+      hasPendingAction: Boolean(pendingAction),
+      finalReply: truncateForLog(finalReplyText, 220),
+    })
 
     response.json({
       reply: finalReplyText,
