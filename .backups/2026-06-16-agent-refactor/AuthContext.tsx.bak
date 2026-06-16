@@ -1,0 +1,748 @@
+/* eslint-disable react-refresh/only-export-components */
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import {
+  useAccountsStore,
+  useAuthSessionStore,
+} from '../data/repositories/authRepository'
+import {
+  clearPendingInviteMetadata,
+  getCurrentSessionUser,
+  sendPasswordResetEmail as sendSupabasePasswordResetEmail,
+  signInWithPassword as signInWithSupabasePassword,
+  signOutAuth,
+  signUpWithPassword,
+  subscribeToAuthChanges,
+} from '../data/supabase/authRepository'
+import {
+  ensureAccountViaApi,
+  readBootstrapViaApi,
+} from '../data/server/authApi'
+import { buildAppUrl } from '../lib/app/url'
+import { isSupabaseConfigured } from '../lib/supabase/env'
+import { appRoutes } from '../routes/paths'
+import { readPendingInvite, type InviteRole } from '../utils/invite'
+import { useApartment } from './ApartmentContext'
+import type { AccountIdentity, AuthResult } from '../types/auth'
+import type { User } from '../types/models'
+
+interface AccountCreationResult {
+  ok: boolean
+  error: string
+  account?: AccountIdentity
+  requiresEmailVerification?: boolean
+  email?: string
+}
+
+interface LoginInput {
+  email: string
+  password: string
+  allowDetachedAccount?: boolean
+}
+
+interface RegisterInput {
+  name: string
+  phone: string
+  email: string
+  password: string
+  role?: User['role']
+  attachToApartment?: boolean
+  signInAfterRegister?: boolean
+  emailRedirectTo?: string
+}
+
+interface AuthState {
+  user: User | null
+  isAuthReady: boolean
+  login: (input: LoginInput) => Promise<AuthResult>
+  register: (input: RegisterInput) => Promise<AuthResult>
+  createAccountIdentity: (input: RegisterInput) => Promise<AccountCreationResult>
+  sendPasswordResetEmail: (email: string) => Promise<{ ok: boolean; error: string }>
+  refreshSessionUser: (emailFromSession?: string | null) => Promise<User | null>
+  updateSessionUser: (user: User) => void
+  logout: () => void
+}
+
+const AuthContext = createContext<AuthState | null>(null)
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase()
+}
+
+function buildEmailVerificationRedirect() {
+  if (typeof window === 'undefined') {
+    return undefined
+  }
+
+  return buildAppUrl(appRoutes.login)
+}
+
+function buildDetachedUser(account: AccountIdentity, role: User['role'] = 'tenant'): User {
+  return {
+    id: account.id,
+    apartment_id: 0,
+    name: account.name,
+    email: account.email,
+    role,
+    status: 'active',
+    joined_at: new Date().toISOString().slice(0, 10),
+  }
+}
+
+async function readBootstrapWithRetry() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await readBootstrapViaApi()
+    } catch (error) {
+      if (attempt === 1) throw error
+      await new Promise((resolve) => window.setTimeout(resolve, 150 * (attempt + 1)))
+    }
+  }
+
+  throw new Error('Failed to load bootstrap state.')
+}
+
+function readInviteMetadata(user: { user_metadata?: Record<string, unknown> } | null) {
+  const apartmentId = Number(user?.user_metadata?.pending_invite_apartment_id ?? '')
+  const role = user?.user_metadata?.pending_invite_role
+  const token = user?.user_metadata?.pending_invite_token
+
+  if (!Number.isFinite(apartmentId) || apartmentId <= 0) return null
+  if (role !== 'tenant' && role !== 'landlord') return null
+
+  return {
+    apartmentId,
+    role: role as InviteRole,
+    token: typeof token === 'string' && token.trim() ? token.trim() : null,
+  }
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const {
+    current,
+    addUserAccount,
+    addLandlord,
+    activateApartment,
+    clearActiveApartment,
+    completeInviteJoin,
+  } = useApartment()
+  const [accounts, setAccounts] = useAccountsStore()
+  const [user, setUser] = useAuthSessionStore()
+  const [isAuthReady, setIsAuthReady] = useState(!isSupabaseConfigured)
+  const authSyncVersionRef = useRef(0)
+
+  const users = useMemo(
+    () =>
+      current
+        ? [
+            ...current.roommates,
+            ...(current.landlordUser ? [current.landlordUser] : []),
+          ]
+        : [],
+    [current],
+  )
+
+  useEffect(() => {
+    if (isSupabaseConfigured || !current?.credentialsByEmail) return
+
+    const apartmentUsers = [
+      current.adminUser,
+      ...current.roommates,
+      ...(current.landlordUser ? [current.landlordUser] : []),
+    ]
+
+    setAccounts((existingAccounts) => {
+      let changed = false
+      const nextAccounts = [...existingAccounts]
+
+      Object.entries(current.credentialsByEmail).forEach(([email, password]) => {
+        const normalizedEmail = normalizeEmail(email)
+        const exists = nextAccounts.some(
+          (account) => normalizeEmail(account.email) === normalizedEmail,
+        )
+
+        if (exists) return
+
+        const matchedUser = apartmentUsers.find(
+          (candidate) => normalizeEmail(candidate.email) === normalizedEmail,
+        )
+
+        nextAccounts.unshift({
+          id: matchedUser?.id ?? Date.now() + nextAccounts.length,
+          name: matchedUser?.name ?? normalizedEmail,
+          email: normalizedEmail,
+          phone: '',
+          password,
+        })
+        changed = true
+      })
+
+      return changed ? nextAccounts : existingAccounts
+    })
+  }, [current, setAccounts])
+
+  const persistUser = useCallback(
+    (nextUser: User | null) => {
+      setUser(nextUser)
+    },
+    [setUser],
+  )
+
+  const refreshSessionUser = useCallback(
+    async (emailFromSession?: string | null) => {
+      if (!isSupabaseConfigured) {
+        return null
+      }
+
+      const syncVersion = ++authSyncVersionRef.current
+      const isLatestSync = () => authSyncVersionRef.current === syncVersion
+
+      try {
+        const authUser = emailFromSession ? null : await getCurrentSessionUser()
+        const normalizedEmail = emailFromSession
+          ? normalizeEmail(emailFromSession)
+          : authUser?.email
+            ? normalizeEmail(authUser.email)
+            : ''
+        if (!normalizedEmail) {
+          if (isLatestSync()) {
+            persistUser(null)
+            clearActiveApartment()
+            setIsAuthReady(true)
+          }
+          return null
+        }
+
+        let snapshot = await readBootstrapWithRetry()
+        let account =
+          snapshot.account &&
+          normalizeEmail(snapshot.account.email) === normalizedEmail
+            ? snapshot.account
+            : null
+
+        if (!account) {
+          if (isLatestSync()) {
+            persistUser(null)
+            clearActiveApartment()
+            setIsAuthReady(true)
+          }
+          return null
+        }
+
+        if (!snapshot.membership || !snapshot.apartmentState) {
+          const pendingInvite = readInviteMetadata(authUser)
+
+          if (pendingInvite && account) {
+            const detachedAccount = account
+            const joinResult = await completeInviteJoin({
+              apartmentId: pendingInvite.apartmentId,
+              role: pendingInvite.role,
+              user: buildDetachedUser(
+                detachedAccount,
+                pendingInvite.role === 'landlord' ? 'landlord' : 'tenant',
+              ),
+              token: pendingInvite.token,
+            })
+
+            if (joinResult.ok) {
+              await clearPendingInviteMetadata().catch(() => undefined)
+              snapshot = await readBootstrapWithRetry()
+              account =
+                snapshot.account &&
+                normalizeEmail(snapshot.account.email) === normalizedEmail
+                  ? snapshot.account
+                  : null
+            }
+          }
+        }
+
+        if (!account) {
+          if (isLatestSync()) {
+            persistUser(null)
+            clearActiveApartment()
+            setIsAuthReady(true)
+          }
+          return null
+        }
+
+        if (!snapshot.membership || !snapshot.apartmentState) {
+          if (isLatestSync()) {
+            clearActiveApartment()
+            persistUser(null)
+            setIsAuthReady(true)
+          }
+          return null
+        }
+
+        const apartmentState = await activateApartment(
+          snapshot.apartmentState.apartment.id,
+          snapshot.apartmentState,
+        )
+
+        const nextUser =
+          apartmentState?.roommates.find((member) => member.id === account.id) ??
+          (apartmentState?.landlordUser?.id === account.id
+            ? apartmentState.landlordUser
+            : null)
+
+        if (!nextUser) {
+          if (isLatestSync()) {
+            clearActiveApartment()
+            persistUser(null)
+            setIsAuthReady(true)
+          }
+          return null
+        }
+
+        if (isLatestSync()) {
+          persistUser(nextUser)
+          setIsAuthReady(true)
+        }
+
+        return nextUser
+      } catch {
+        if (isLatestSync()) {
+          // Preserve the current in-memory session on transient bootstrap/network failures.
+          // A temporary API timeout should not behave like an explicit logout.
+          if (user) {
+            setIsAuthReady(true)
+            return user
+          }
+
+          persistUser(null)
+          clearActiveApartment()
+          setIsAuthReady(true)
+        }
+        return user ?? null
+      }
+    },
+    [activateApartment, clearActiveApartment, completeInviteJoin, persistUser, user],
+  )
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+
+    let cancelled = false
+    let receivedInitialSessionEvent = false
+
+    const unsubscribe = subscribeToAuthChanges((_event, sessionUser) => {
+      if (cancelled) return
+      if (_event === 'INITIAL_SESSION') {
+        receivedInitialSessionEvent = true
+      }
+      void refreshSessionUser(sessionUser?.email ?? null)
+    })
+
+    const fallbackRefreshTimer = window.setTimeout(() => {
+      if (cancelled || receivedInitialSessionEvent) return
+      void refreshSessionUser()
+    }, 1200)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(fallbackRefreshTimer)
+      unsubscribe()
+    }
+  }, [refreshSessionUser])
+
+  const createAccountIdentity = useCallback(
+    async ({ name, phone, email, password, emailRedirectTo }: RegisterInput): Promise<AccountCreationResult> => {
+      const normalizedEmail = normalizeEmail(email)
+
+      if (!name.trim()) {
+        return { ok: false, error: 'צריך למלא שם מלא.' }
+      }
+
+      if (!phone.trim()) {
+        return { ok: false, error: 'נדרש מספר טלפון.' }
+      }
+
+      if (!normalizedEmail) {
+        return { ok: false, error: 'נדרשת כתובת אימייל.' }
+      }
+
+      if (password.trim().length < 6) {
+        return { ok: false, error: 'הסיסמה צריכה לכלול לפחות 6 תווים.' }
+      }
+
+      const existingLocalAccount = !isSupabaseConfigured
+        ? accounts.find((account) => normalizeEmail(account.email) === normalizedEmail)
+        : null
+
+      if (existingLocalAccount) {
+        return {
+          ok: false,
+          error: 'כבר קיים חשבון עם כתובת המייל הזו.',
+        }
+      }
+
+      let nextAccount: AccountIdentity
+
+      try {
+        if (isSupabaseConfigured) {
+          await signOutAuth().catch(() => undefined)
+          persistUser(null)
+          clearActiveApartment()
+
+          const signUpResult = await signUpWithPassword({
+            email: normalizedEmail,
+            password,
+            name: name.trim(),
+            phone: phone.trim(),
+            emailRedirectTo: emailRedirectTo ?? buildEmailVerificationRedirect(),
+            pendingInviteApartmentId: readPendingInvite()?.apartmentId,
+            pendingInviteRole: readPendingInvite()?.role,
+            pendingInviteToken: readPendingInvite()?.token ?? null,
+          })
+
+          if (!signUpResult.hasSession) {
+            return {
+              ok: true,
+              error: '',
+              requiresEmailVerification: true,
+              email: normalizedEmail,
+            }
+          }
+
+          nextAccount = await ensureAccountViaApi({
+            fullName: name.trim(),
+            phone: phone.trim(),
+          })
+        } else {
+          nextAccount = {
+            id: Date.now(),
+            name: name.trim(),
+            email: normalizedEmail,
+            phone: phone.trim(),
+            password,
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ''
+        return {
+          ok: false,
+          error:
+            message.includes('already') ||
+            message.includes('duplicate') ||
+            message.includes('unique')
+              ? 'כבר קיים חשבון עם כתובת המייל הזו.'
+              : message || 'לא הצלחנו ליצור את החשבון.',
+        }
+      }
+
+      setAccounts((currentAccounts) => {
+        const exists = currentAccounts.some((account) => account.id === nextAccount.id)
+        return exists ? currentAccounts : [nextAccount, ...currentAccounts]
+      })
+
+      return { ok: true, error: '', account: nextAccount }
+    },
+    [accounts, clearActiveApartment, persistUser, setAccounts],
+  )
+
+  const login = useCallback(
+    async ({
+      email,
+      password,
+      allowDetachedAccount = false,
+    }: LoginInput): Promise<AuthResult> => {
+      const normalizedEmail = normalizeEmail(email)
+
+      if (!normalizedEmail) {
+        return { ok: false, error: 'צריך להזין כתובת אימייל.' }
+      }
+
+      if (!password.trim()) {
+        return { ok: false, error: 'צריך להזין סיסמה.' }
+      }
+
+      try {
+        if (isSupabaseConfigured) {
+          const authUser = await signInWithSupabasePassword({ email: normalizedEmail, password })
+
+          let snapshot = await readBootstrapWithRetry()
+          let account = snapshot.account
+
+          if (!account && authUser?.email) {
+            await ensureAccountViaApi({
+              fullName:
+                typeof authUser.user_metadata?.full_name === 'string' &&
+                authUser.user_metadata.full_name.trim()
+                  ? authUser.user_metadata.full_name.trim()
+                  : normalizedEmail,
+              phone:
+                typeof authUser.user_metadata?.phone === 'string' &&
+                authUser.user_metadata.phone.trim()
+                  ? authUser.user_metadata.phone.trim()
+                  : null,
+            })
+
+            snapshot = await readBootstrapWithRetry()
+            account = snapshot.account
+          }
+
+          if (!account) {
+            return {
+              ok: false,
+              error: 'החשבון אומת, אבל לא הצלחנו לטעון את פרופיל המשתמש.',
+            }
+          }
+
+          if (!snapshot.membership || !snapshot.apartmentState) {
+            if (!account) {
+              return {
+                ok: false,
+                error: 'החשבון אומת, אבל לא הצלחנו לטעון את פרופיל המשתמש.',
+              }
+            }
+            if (!allowDetachedAccount) {
+              await signOutAuth().catch(() => undefined)
+              persistUser(null)
+              clearActiveApartment()
+              return {
+                ok: false,
+                error:
+                  'החשבון קיים, אבל עדיין לא משויך לדירה. צריך להיכנס דרך קישור הזמנה.',
+              }
+            }
+
+            const detachedUser = buildDetachedUser(account)
+            clearActiveApartment()
+            persistUser(null)
+            return { ok: true, error: '', user: detachedUser }
+          }
+
+          const apartmentState = await activateApartment(
+            snapshot.apartmentState.apartment.id,
+            snapshot.apartmentState,
+          )
+          const nextUser =
+            apartmentState?.roommates.find((member) => member.id === account.id) ??
+            (apartmentState?.landlordUser?.id === account.id
+              ? apartmentState.landlordUser
+              : null)
+
+          if (!nextUser) {
+            return {
+              ok: false,
+              error: 'לא הצלחנו לטעון את פרטי הדירה של החשבון הזה.',
+            }
+          }
+
+          persistUser(nextUser)
+          return { ok: true, error: '', user: nextUser }
+        }
+
+        const localMatchedMembership = users.find(
+          (candidate) => normalizeEmail(candidate.email) === normalizedEmail,
+        )
+        const matchedAccount = accounts.find(
+          (account) => normalizeEmail(account.email) === normalizedEmail,
+        )
+
+        if (!matchedAccount) {
+          return { ok: false, error: 'לא מצאנו חשבון עם כתובת המייל הזו.' }
+        }
+
+        if (matchedAccount.password !== password) {
+          return { ok: false, error: 'כתובת האימייל או הסיסמה לא נכונות.' }
+        }
+
+        if (!localMatchedMembership && !allowDetachedAccount) {
+          return {
+            ok: false,
+            error: 'החשבון קיים, אבל עדיין לא משויך לדירה. צריך להיכנס דרך קישור הזמנה.',
+          }
+        }
+
+        if (!localMatchedMembership && allowDetachedAccount) {
+          persistUser(null)
+          clearActiveApartment()
+          return {
+            ok: true,
+            error: '',
+            user: {
+              id: matchedAccount.id,
+              apartment_id: 0,
+              name: matchedAccount.name,
+              email: matchedAccount.email,
+              role: 'tenant',
+              status: 'active',
+              joined_at: new Date().toISOString().slice(0, 10),
+            },
+          }
+        }
+
+        const nextUser =
+          localMatchedMembership ??
+          ({
+            id: matchedAccount.id,
+            apartment_id: current?.apartment.id ?? 0,
+            name: matchedAccount.name,
+            email: matchedAccount.email,
+            role: 'tenant',
+            status: 'active',
+            joined_at: new Date().toISOString().slice(0, 10),
+          } satisfies User)
+
+        persistUser(nextUser)
+        return { ok: true, error: '', user: nextUser }
+      } catch (error) {
+        return {
+          ok: false,
+          error:
+            error instanceof Error && error.message
+              ? error.message
+              : 'לא הצלחנו להתחבר לחשבון.',
+        }
+      }
+    },
+    [accounts, activateApartment, clearActiveApartment, current, persistUser, users],
+  )
+
+  const register = useCallback(
+    async ({
+      name,
+      phone,
+      email,
+      password,
+      role,
+      attachToApartment = false,
+      signInAfterRegister = attachToApartment,
+      emailRedirectTo,
+    }: RegisterInput): Promise<AuthResult> => {
+      const accountResult = await createAccountIdentity({
+        name,
+        phone,
+        email,
+        password,
+        role,
+        emailRedirectTo,
+      })
+      if (!accountResult.ok || !accountResult.account) {
+        if (accountResult.requiresEmailVerification) {
+          return {
+            ok: true,
+            error: '',
+            requiresEmailVerification: true,
+            email: accountResult.email ?? normalizeEmail(email),
+          }
+        }
+
+        return {
+          ok: false,
+          error: accountResult.error || 'לא הצלחנו ליצור את החשבון.',
+        }
+      }
+
+      const account = accountResult.account
+
+      if (!attachToApartment) {
+        const detachedUser = buildDetachedUser(account, role ?? 'tenant')
+        return { ok: true, error: '', user: detachedUser }
+      }
+
+      const createdUser =
+        role === 'landlord'
+          ? await addLandlord({ userId: account.id, name, email, phone, password })
+          : await addUserAccount({ userId: account.id, name, email, phone, password })
+
+      const nextUser =
+        createdUser ??
+        ({
+          id: account.id,
+          apartment_id: current?.apartment.id ?? 0,
+          name: name.trim(),
+          email: normalizeEmail(email),
+          role: role ?? 'tenant',
+          status: 'active',
+          joined_at: new Date().toISOString().slice(0, 10),
+        } satisfies User)
+
+      if (signInAfterRegister) {
+        persistUser(nextUser)
+      }
+
+      return { ok: true, error: '', user: nextUser }
+    },
+    [addLandlord, addUserAccount, createAccountIdentity, current, persistUser],
+  )
+
+  const sendPasswordResetEmail = useCallback(async (email: string) => {
+    if (!email.trim()) {
+      return { ok: false, error: 'צריך להזין כתובת אימייל.' }
+    }
+
+    if (!isSupabaseConfigured) {
+      return { ok: true, error: '' }
+    }
+
+    try {
+      const redirectTo =
+        typeof window !== 'undefined'
+          ? buildAppUrl(appRoutes.resetPassword)
+          : appRoutes.resetPassword
+
+      await sendSupabasePasswordResetEmail(email, redirectTo)
+      return { ok: true, error: '' }
+    } catch {
+      return { ok: true, error: '' }
+    }
+  }, [])
+
+  const logout = useCallback(() => {
+    persistUser(null)
+    clearActiveApartment()
+    if (isSupabaseConfigured) {
+      void signOutAuth()
+    }
+  }, [clearActiveApartment, persistUser])
+
+  const updateSessionUser = useCallback(
+    (nextUser: User) => {
+      persistUser(nextUser)
+    },
+    [persistUser],
+  )
+
+  const value = useMemo(
+    () => ({
+      user,
+      isAuthReady,
+      login,
+      register,
+      createAccountIdentity,
+      sendPasswordResetEmail,
+      refreshSessionUser,
+      updateSessionUser,
+      logout,
+    }),
+    [
+      user,
+      isAuthReady,
+      login,
+      register,
+      createAccountIdentity,
+      sendPasswordResetEmail,
+      refreshSessionUser,
+      updateSessionUser,
+      logout,
+    ],
+  )
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
+  return ctx
+}

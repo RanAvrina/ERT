@@ -40,35 +40,6 @@ const confirmBodySchema = z.object({
 
 type AgentContext = Awaited<ReturnType<typeof buildAgentContext>>
 
-const readToolNameSchema = z.enum([
-  'get_tasks',
-  'get_task_summary',
-  'get_expenses',
-  'get_payments',
-  'get_balances',
-  'get_apartment_summary',
-  'get_shopping_items',
-  'get_tickets',
-  'get_apartment_info',
-  'get_home_items',
-])
-
-const plannerResponseSchema = z.object({
-  mode: z.enum(['answer', 'ask', 'tool', 'action']),
-  reply: z.string().trim().optional(),
-  tool: z
-    .object({
-      name: readToolNameSchema,
-      args: z.record(z.string(), z.unknown()).optional(),
-    })
-    .nullable()
-    .optional(),
-  action: z.unknown().nullable().optional(),
-})
-
-type ReadToolName = z.infer<typeof readToolNameSchema>
-type PlannerResponse = z.infer<typeof plannerResponseSchema>
-
 const HE = {
   whoOwesMe: 'מי חייב לי',
   whoElseOwesMe: 'מי עוד חייב לי',
@@ -134,16 +105,6 @@ function extractResponseText(response: unknown) {
     })
     .join('\n')
     .trim()
-}
-
-function hasMeaningfulAgentReply(
-  reply: string | undefined,
-  action: unknown,
-  validatedAction: unknown,
-) {
-  if (typeof reply === 'string' && reply.trim()) return true
-  if (validatedAction) return true
-  return Boolean(action)
 }
 
 function parseAmountFromMessage(message: string) {
@@ -313,14 +274,6 @@ function buildScopedOpenAIContext(
   const combinedMessage = pendingOriginalMessage ? `${pendingOriginalMessage} ${message}` : message
   const normalizedCombinedMessage = normalizeText(combinedMessage)
   const scope = inferQueryScope(combinedMessage)
-  const asksGeneralSummary =
-    normalizedCombinedMessage.includes('מה המצב') ||
-    normalizedCombinedMessage.includes('מצב הדירה') ||
-    normalizedCombinedMessage.includes('מה קורה בדירה') ||
-    normalizedCombinedMessage.includes('תן לי סיכום') ||
-    normalizedCombinedMessage.includes('סיכום דירה') ||
-    normalizedCombinedMessage.includes('תסכם לי') ||
-    normalizedCombinedMessage.includes('עדכן אותי')
   const baseContext = buildOpenAIContext(context)
   const overdueTasks = context.tasks.filter(
     (task) =>
@@ -359,8 +312,8 @@ function buildScopedOpenAIContext(
         category: ticket.category,
       })),
     },
-    tasks: scope.tasks || asksGeneralSummary ? context.tasks.slice(0, 8) : undefined,
-    expenses: scope.finance || asksGeneralSummary
+    tasks: scope.tasks ? context.tasks.slice(0, 8) : undefined,
+    expenses: scope.finance
       ? context.expenses.slice(0, 6).map((expense) => ({
           id: expense.id,
           description: expense.description,
@@ -370,7 +323,7 @@ function buildScopedOpenAIContext(
           paidByName: expense.paidByName,
         }))
       : undefined,
-    payments: scope.finance || asksGeneralSummary
+    payments: scope.finance
       ? context.payments.slice(0, 6).map((payment) => ({
           id: payment.id,
           amount: payment.amount,
@@ -380,430 +333,16 @@ function buildScopedOpenAIContext(
           note: payment.note,
         }))
       : undefined,
-    shoppingItems: scope.shopping || asksGeneralSummary ? context.shoppingItems.slice(0, 8) : undefined,
-    tickets: scope.tickets || asksGeneralSummary ? context.tickets.slice(0, 6) : undefined,
+    shoppingItems: scope.shopping ? context.shoppingItems.slice(0, 8) : undefined,
+    tickets: scope.tickets ? context.tickets.slice(0, 6) : undefined,
     homeItems: scope.homeItems || scope.tasks ? context.homeItems.slice(0, 8) : undefined,
     apartmentInfoItems: ['דירה', 'כתובת', 'מונה', 'חשמל', 'מים', 'ספק', 'חשבון', 'טלפון'].some(
       (term) => normalizedCombinedMessage.includes(term),
     )
       ? context.apartmentInfoItems.slice(0, 10)
       : undefined,
-    balanceSummary: scope.finance || asksGeneralSummary ? context.balanceSummary : undefined,
+    balanceSummary: scope.finance ? context.balanceSummary : undefined,
   }
-}
-
-function inferHeuristicReadToolRequest(
-  message: string,
-  context: AgentContext,
-  conversationContext = '',
-) {
-  const normalizedMessage = normalizeText(message)
-  const normalizedConversationContext = normalizeText(conversationContext)
-  const asksForMoreDetail =
-    normalizedMessage.includes('תפרט') ||
-    normalizedMessage.includes('תראה לי הכל') ||
-    normalizedMessage.includes('כולל תאריכים') ||
-    normalizedMessage.includes('כולל סכום') ||
-    normalizedMessage.includes('על מה') ||
-    normalizedMessage.includes('מה שילמתי')
-  const conversationIsAboutDebtFromExpenses =
-    normalizedConversationContext.includes('למה חייבים לי') ||
-    normalizedConversationContext.includes('מה שילמתי שיצר את החוב') ||
-    normalizedConversationContext.includes('איזה הוצאות') ||
-    normalizedConversationContext.includes('הוצאות שיצרו') ||
-    normalizedConversationContext.includes('חייבים לי כסף')
-
-  if (asksForMoreDetail && conversationIsAboutDebtFromExpenses) {
-    return {
-      name: 'get_expenses' as const,
-      args: { scope: 'mine', limit: 12 },
-    }
-  }
-
-  if (
-    normalizedMessage.includes('מה המטלות שלי') ||
-    normalizedMessage.includes('המטלות שלי') ||
-    normalizedMessage.includes('המשימות שלי') ||
-    normalizedMessage.includes('מה יש לי לעשות')
-  ) {
-    return {
-      name: 'get_tasks' as const,
-      args: { scope: 'mine', limit: 10 },
-    }
-  }
-
-  if (
-    normalizedMessage.includes('מה חסר לקנות') ||
-    normalizedMessage.includes('מה צריך לקנות') ||
-    normalizedMessage.includes('רשימת קניות') ||
-    normalizedMessage.includes('קניות פתוחות')
-  ) {
-    return {
-      name: 'get_shopping_items' as const,
-      args: { status: 'open', limit: 12 },
-    }
-  }
-
-  if (
-    normalizedMessage.includes('פניות פתוחות') ||
-    normalizedMessage.includes('תקלות פתוחות') ||
-    normalizedMessage.includes('איזה פניות') ||
-    normalizedMessage.includes('איזה תקלות')
-  ) {
-    return {
-      name: 'get_tickets' as const,
-      args: { status: 'open', limit: 10 },
-    }
-  }
-
-  if (
-    normalizedMessage.includes('מונה') ||
-    normalizedMessage.includes('ספק') ||
-    normalizedMessage.includes('מספר חשבון') ||
-    normalizedMessage.includes('טלפון')
-  ) {
-    const query = normalizedMessage.includes('חשמל')
-      ? 'חשמל'
-      : normalizedMessage.includes('מים')
-        ? 'מים'
-        : normalizedMessage.includes('אינטרנט')
-          ? 'אינטרנט'
-          : normalizedMessage.includes('גז')
-            ? 'גז'
-            : ''
-
-    return {
-      name: 'get_apartment_info' as const,
-      args: { query, limit: 10 },
-    }
-  }
-
-  const matchingHomeItem = context.homeItems.find(
-    (item) =>
-      normalizedMessage.includes(normalizeText(item.area)) ||
-      normalizedMessage.includes(normalizeText(item.name)),
-  )
-
-  if (
-    matchingHomeItem &&
-    (normalizedMessage.includes('פריט') ||
-      normalizedMessage.includes('פריטים') ||
-      normalizedMessage.includes('יש ב') ||
-      normalizedMessage.includes('מה יש ב'))
-  ) {
-    return {
-      name: 'get_home_items' as const,
-      args: { query: matchingHomeItem.area, limit: 12 },
-    }
-  }
-
-  if (
-    normalizedMessage.includes('מי שילם') ||
-    normalizedMessage.includes('תשלומים אחרונים') ||
-    normalizedMessage.includes('מי העביר')
-  ) {
-    return {
-      name: 'get_payments' as const,
-      args: { scope: 'all', limit: 8 },
-    }
-  }
-
-  if (
-    normalizedMessage.includes('הוצאות אחרונות') ||
-    normalizedMessage.includes('מה ההוצאות') ||
-    normalizedMessage.includes('על מה הוצאנו')
-  ) {
-    return {
-      name: 'get_expenses' as const,
-      args: { scope: 'all', limit: 8 },
-    }
-  }
-
-  if (
-    normalizedMessage.includes('כמה אני חייב') ||
-    normalizedMessage.includes('כמה חייבים לי') ||
-    normalizedMessage.includes('מי חייב לי') ||
-    normalizedMessage.includes('למי אני חייב')
-  ) {
-    return {
-      name: 'get_balances' as const,
-      args: {},
-    }
-  }
-
-  if (normalizedMessage.includes('מה המצב') || normalizedMessage.includes('סיכום הדירה')) {
-    return {
-      name: 'get_apartment_summary' as const,
-      args: {},
-    }
-  }
-
-  if (
-    normalizedMessage.includes('מה קורה בדירה') ||
-    normalizedMessage.includes('מצב הדירה') ||
-    normalizedMessage.includes('תן לי סיכום') ||
-    normalizedMessage.includes('תסכם לי') ||
-    normalizedMessage.includes('עדכן אותי')
-  ) {
-    return {
-      name: 'get_apartment_summary' as const,
-      args: {},
-    }
-  }
-
-  return null
-}
-
-function clampLimit(value: unknown, fallback: number, max: number) {
-  const numericValue =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number(value)
-        : Number.NaN
-
-  if (!Number.isFinite(numericValue)) return fallback
-  return Math.max(1, Math.min(max, Math.trunc(numericValue)))
-}
-
-function executeReadTool(context: AgentContext, toolName: ReadToolName, rawArgs?: Record<string, unknown>) {
-  const args = rawArgs ?? {}
-
-  switch (toolName) {
-    case 'get_tasks': {
-      const scope = args.scope === 'all' ? 'all' : 'mine'
-      const status =
-        typeof args.status === 'string' && args.status.trim() ? args.status.trim() : null
-      const limit = clampLimit(args.limit, 8, 20)
-      const tasks = context.tasks.filter((task) => {
-        if (scope === 'mine' && context.user && task.assigneeAccountId !== context.user.id) {
-          return false
-        }
-        if (status && task.status !== status) {
-          return false
-        }
-        return true
-      })
-
-      return {
-        tool: toolName,
-        args: { scope, status, limit },
-        result: tasks.slice(0, limit),
-      }
-    }
-
-    case 'get_task_summary': {
-      const myTasks = context.user
-        ? context.tasks.filter((task) => task.assigneeAccountId === context.user!.id)
-        : []
-
-      return {
-        tool: toolName,
-        result: {
-          myOpenTasks: myTasks.filter((task) => task.status === 'open').length,
-          myInProgressTasks: myTasks.filter((task) => task.status === 'in_progress').length,
-          overdueTasks: context.tasks.filter(
-            (task) =>
-              Boolean(task.dueDate) &&
-              task.status !== 'done' &&
-              task.status !== 'cancelled' &&
-              task.dueDate! < context.today,
-          ).length,
-          totalOpenTasks: context.tasks.filter((task) => task.status === 'open').length,
-        },
-      }
-    }
-
-    case 'get_expenses': {
-      const scope = args.scope === 'all' ? 'all' : 'mine'
-      const limit = clampLimit(args.limit, 6, 20)
-      const expenses = context.expenses.filter((expense) => {
-        if (scope === 'mine' && context.user && expense.paidByAccountId !== context.user.id) {
-          return false
-        }
-        return true
-      })
-
-      return {
-        tool: toolName,
-        args: { scope, limit },
-        result: expenses.slice(0, limit),
-      }
-    }
-
-    case 'get_payments': {
-      const scope = args.scope === 'all' ? 'all' : 'related_to_me'
-      const limit = clampLimit(args.limit, 6, 20)
-      const payments = context.payments.filter((payment) => {
-        if (scope === 'all' || !context.user) return true
-        return (
-          payment.payerAccountId === context.user.id || payment.payeeAccountId === context.user.id
-        )
-      })
-
-      return {
-        tool: toolName,
-        args: { scope, limit },
-        result: payments.slice(0, limit),
-      }
-    }
-
-    case 'get_balances':
-      return {
-        tool: toolName,
-        result: context.balanceSummary,
-      }
-
-    case 'get_apartment_summary':
-      return {
-        tool: toolName,
-        result: {
-          apartment: context.apartment,
-          today: context.today,
-          roommates: context.roommates,
-          openTasks: context.tasks.filter((task) => task.status === 'open').length,
-          inProgressTasks: context.tasks.filter((task) => task.status === 'in_progress').length,
-          openShoppingItems: context.shoppingItems.filter((item) => item.status === 'open').length,
-          openTickets: context.tickets.filter((ticket) => ticket.status !== 'closed').length,
-          latestExpenses: context.expenses.slice(0, 5),
-          latestPayments: context.payments.slice(0, 5),
-        },
-      }
-
-    case 'get_shopping_items': {
-      const status =
-        typeof args.status === 'string' && args.status.trim() ? args.status.trim() : 'open'
-      const limit = clampLimit(args.limit, 8, 25)
-      const items = context.shoppingItems.filter((item) => {
-        if (status === 'all') return true
-        return item.status === status
-      })
-
-      return {
-        tool: toolName,
-        args: { status, limit },
-        result: items.slice(0, limit),
-      }
-    }
-
-    case 'get_tickets': {
-      const status =
-        typeof args.status === 'string' && args.status.trim() ? args.status.trim() : 'open'
-      const limit = clampLimit(args.limit, 6, 20)
-      const tickets = context.tickets.filter((ticket) => {
-        if (status === 'all') return true
-        return ticket.status === status
-      })
-
-      return {
-        tool: toolName,
-        args: { status, limit },
-        result: tickets.slice(0, limit),
-      }
-    }
-
-    case 'get_apartment_info': {
-      const query =
-        typeof args.query === 'string' && args.query.trim()
-          ? normalizeText(args.query).toLowerCase()
-          : ''
-      const limit = clampLimit(args.limit, 10, 20)
-      const items = query
-        ? context.apartmentInfoItems.filter((item) =>
-            [item.title, item.categoryLabel, item.provider, item.notes, item.phone, item.accountNumber, item.meterNumber]
-              .filter((value): value is string => Boolean(value))
-              .some((value) => normalizeText(value).toLowerCase().includes(query)),
-          )
-        : context.apartmentInfoItems
-
-      return {
-        tool: toolName,
-        args: { query, limit },
-        result: items.slice(0, limit),
-      }
-    }
-
-    case 'get_home_items': {
-      const query =
-        typeof args.query === 'string' && args.query.trim()
-          ? normalizeText(args.query).toLowerCase()
-          : ''
-      const limit = clampLimit(args.limit, 10, 25)
-      const items = query
-        ? context.homeItems.filter((item) =>
-            [item.name, item.area, item.defaultNote]
-              .filter((value): value is string => Boolean(value))
-              .some((value) => normalizeText(value).toLowerCase().includes(query)),
-          )
-        : context.homeItems
-
-      return {
-        tool: toolName,
-        args: { query, limit },
-        result: items.slice(0, limit),
-      }
-    }
-  }
-}
-
-function tryParsePlannerResponse(output: string): PlannerResponse | null {
-  try {
-    return plannerResponseSchema.parse(JSON.parse(output))
-  } catch {
-    const jsonMatch = output.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return null
-
-    try {
-      return plannerResponseSchema.parse(JSON.parse(jsonMatch[0]))
-    } catch {
-      return null
-    }
-  }
-}
-
-async function buildNaturalToolReply(
-  client: OpenAI,
-  model: string,
-  message: string,
-  history: string,
-  toolName: ReadToolName,
-  toolData: ReturnType<typeof executeReadTool>,
-) {
-  const summaryHint =
-    toolName === 'get_apartment_summary'
-      ? 'If the tool is get_apartment_summary, give a short apartment status summary: tasks, shopping, tickets, and recent money activity in 2-5 short lines.'
-      : toolName === 'get_balances'
-        ? 'If the tool is get_balances, first infer whether the user asks who owes them money or whether they owe money to others. currentUserNetBalance > 0 means others owe the user. currentUserNetBalance < 0 means the user owes others. Answer the exact question directly with a clear yes/no if relevant, and only then add short details.'
-        : toolName === 'get_expenses'
-          ? 'If the recent conversation is about why others owe the user money or what created the debt, focus on expenses the user paid, with dates, amounts, and what each expense was for. Do not switch to payment transfers unless the user explicitly asks about payments.'
-        : ''
-
-  const toolAnswerResponse = await client.responses.create({
-    model,
-    max_output_tokens: 320,
-    instructions:
-      'You are an AI assistant inside the ERT shared apartment app. ' +
-      'Respond in short, natural Hebrew. ' +
-      'Use the tool result as the source of truth. ' +
-      'Answer clearly and directly, like a helpful assistant. ' +
-      'Do not mention raw IDs, JSON fields, or internal structure. ' +
-      'Pay close attention to the direction of debt questions: whether the user owes money or others owe the user. ' +
-      'If the user asked a short question, answer briefly. ' +
-      'Give more detail only if the user explicitly asked for detail, breakdown, or explanation. ' +
-      'If the tool result is empty, explain that simply. ' +
-      'Do not return JSON.',
-    input: [
-      `User message: ${message}`,
-      history ? `Conversation history:\n${history}` : '',
-      summaryHint,
-      `Tool used: ${toolName}`,
-      `Tool result:\n${JSON.stringify(toolData, null, 2)}`,
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-  })
-
-  return extractResponseText(toolAnswerResponse).trim()
 }
 
 function looksLikeClarifyingQuestion(reply: string) {
@@ -1516,6 +1055,51 @@ agentRouter.post('/', async (request, response, next) => {
     const deterministicTodayReply = getDeterministicTodayReply(body.message, context)
     const pendingFollowUp = getPendingAgentFollowUp(accountId, apartmentId)
 
+    if (deterministicDebtReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicDebtReply,
+        pendingAction: null,
+      })
+      return
+    }
+
+    if (deterministicOperationsReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicOperationsReply,
+        pendingAction: null,
+      })
+      return
+    }
+
+    if (deterministicApartmentInfoReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicApartmentInfoReply,
+        pendingAction: null,
+      })
+      return
+    }
+
+    if (deterministicExpenseSummaryReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicExpenseSummaryReply,
+        pendingAction: null,
+      })
+      return
+    }
+
+    if (deterministicTodayReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicTodayReply,
+        pendingAction: null,
+      })
+      return
+    }
+
     if (pendingFollowUp && looksLikeRejection(body.message)) {
       clearPendingAgentFollowUp(accountId, apartmentId)
       response.json({
@@ -1557,171 +1141,6 @@ agentRouter.post('/', async (request, response, next) => {
       body.message,
       pendingFollowUp?.originalMessage,
     )
-
-    const plannerResponse = await client.responses.create({
-      model: env.OPENAI_MODEL,
-      max_output_tokens: 320,
-      instructions:
-        'You are the planner layer of the ERT apartment assistant. ' +
-        'Decide whether to answer directly, ask a clarification question, call a read tool, or return a write action proposal. ' +
-        'Return valid JSON only in this format: ' +
-        '{"mode":"answer|ask|tool|action","reply":"string","tool":{"name":"...","args":{}}|null,"action":object|null}. ' +
-        'Use mode "answer" for normal conversational answers that do not require more data. ' +
-        'Use mode "ask" only when critical information is missing. ' +
-        'Use mode "tool" when the user asks about tasks, shopping, tickets, expenses, payments, balances, apartment information, home items, or general apartment status and you need system data. ' +
-        'Use one of these read tools only: get_tasks, get_task_summary, get_expenses, get_payments, get_balances, get_apartment_summary, get_shopping_items, get_tickets, get_apartment_info, get_home_items. ' +
-        'Tool argument conventions: get_tasks supports {scope:"mine|all", status:"open|in_progress|done|cancelled", limit:number}; ' +
-        'get_expenses supports {scope:"mine|all", limit:number}; ' +
-        'get_payments supports {scope:"related_to_me|all", limit:number}; ' +
-        'get_shopping_items supports {status:"open|purchased|all", limit:number}; ' +
-        'get_tickets supports {status:"open|in_progress|closed|all", limit:number}; ' +
-        'get_apartment_info supports {query:string, limit:number}; ' +
-        'get_home_items supports {query:string, limit:number}. ' +
-        'Examples: ' +
-        '"מה המטלות שלי?" -> mode "tool" with get_tasks and scope "mine". ' +
-        '"מה המצב?" -> mode "tool" with get_apartment_summary. ' +
-        '"כמה אני חייב?" -> mode "tool" with get_balances. ' +
-        '"מי שילם?" or "מי שילם לאחרונה?" -> mode "tool" with get_expenses or get_payments depending the question. ' +
-        '"מה ההוצאות האחרונות?" -> mode "tool" with get_expenses and scope "all". ' +
-        '"מה אני צריך לעשות?" -> mode "tool" with get_tasks and scope "mine". ' +
-        '"מה חסר לקנות?" -> mode "tool" with get_shopping_items and status "open". ' +
-        '"איזה פניות פתוחות יש?" -> mode "tool" with get_tickets and status "open". ' +
-        '"מה מספר המונה חשמל?" -> mode "tool" with get_apartment_info and query "חשמל". ' +
-        '"איזה פריטים יש במטבח?" -> mode "tool" with get_home_items and query "מטבח". ' +
-        'Use mode "action" only when the user asks to change data in the app. ' +
-        'For mode "action", action must match one of the supported write actions. ' +
-        'If the user likely has a typo, infer the intended meaning instead of asking a vague fallback question. ' +
-        'For mode "answer" or "ask", do not include tool or action.',
-      input: [
-        `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
-        pendingFollowUp
-          ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${body.message}`
-          : '',
-        history ? `Conversation history:\n${history}` : '',
-        `User message: ${body.message}`,
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-    })
-
-    const plannerText = extractResponseText(plannerResponse)
-    const plannerOutput = tryParsePlannerResponse(plannerText)
-
-    if (plannerOutput?.mode === 'answer' && plannerOutput.reply) {
-      clearPendingAgentFollowUp(accountId, apartmentId)
-      response.json({
-        reply: plannerOutput.reply.trim(),
-        pendingAction: null,
-      })
-      return
-    }
-
-    if (plannerOutput?.mode === 'ask' && plannerOutput.reply) {
-      storePendingAgentFollowUp({
-        accountId,
-        apartmentId,
-        originalMessage: pendingFollowUp?.originalMessage ?? body.message,
-        latestAssistantQuestion: plannerOutput.reply.trim(),
-      })
-      response.json({
-        reply: plannerOutput.reply.trim(),
-        pendingAction: null,
-      })
-      return
-    }
-
-    if (plannerOutput?.mode === 'tool' && plannerOutput.tool) {
-      const toolData = executeReadTool(context, plannerOutput.tool.name, plannerOutput.tool.args)
-      const toolReply = await buildNaturalToolReply(
-        client,
-        env.OPENAI_MODEL,
-        body.message,
-        history,
-        plannerOutput.tool.name,
-        toolData,
-      )
-      if (toolReply) {
-        clearPendingAgentFollowUp(accountId, apartmentId)
-        response.json({
-          reply: toolReply,
-          pendingAction: null,
-        })
-        return
-      }
-    }
-
-    const plannerValidatedAction =
-      plannerOutput?.mode === 'action' && plannerOutput.action
-        ? validateAgentAction(plannerOutput.action)
-        : null
-
-    if (plannerValidatedAction) {
-      const pendingAction = createPendingAgentAction({
-        accountId,
-        apartmentId,
-        action: plannerValidatedAction,
-      })
-
-      clearPendingAgentFollowUp(accountId, apartmentId)
-      response.json({
-        reply:
-          plannerOutput?.reply?.trim() ||
-          `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?`,
-        pendingAction,
-      })
-      return
-    }
-
-    const deterministicReply =
-      deterministicDebtReply ||
-      deterministicOperationsReply ||
-      deterministicApartmentInfoReply ||
-      deterministicExpenseSummaryReply ||
-      deterministicTodayReply
-
-    if (deterministicReply) {
-      clearPendingAgentFollowUp(accountId, apartmentId)
-      response.json({
-        reply: deterministicReply,
-        pendingAction: null,
-      })
-      return
-    }
-
-    const heuristicToolRequest = inferHeuristicReadToolRequest(
-      pendingFollowUp?.originalMessage
-        ? `${pendingFollowUp.originalMessage} ${body.message}`
-        : body.message,
-      context,
-      [
-        pendingFollowUp?.originalMessage ?? '',
-        history,
-        body.message,
-      ]
-        .filter(Boolean)
-        .join(' '),
-    )
-
-    if (heuristicToolRequest) {
-      const toolData = executeReadTool(context, heuristicToolRequest.name, heuristicToolRequest.args)
-      const toolReply = await buildNaturalToolReply(
-        client,
-        env.OPENAI_MODEL,
-        body.message,
-        history,
-        heuristicToolRequest.name,
-        toolData,
-      )
-
-      if (toolReply) {
-        clearPendingAgentFollowUp(accountId, apartmentId)
-        response.json({
-          reply: toolReply,
-          pendingAction: null,
-        })
-        return
-      }
-    }
 
     const aiResponse = await client.responses.create({
       model: env.OPENAI_MODEL,
@@ -1813,38 +1232,6 @@ agentRouter.post('/', async (request, response, next) => {
       if (confirmationAction) {
         agentOutput = confirmationOutput
         validatedAction = confirmationAction
-      }
-    }
-
-    if (!hasMeaningfulAgentReply(agentOutput.reply, agentOutput.action, validatedAction)) {
-      const fallbackResponse = await client.responses.create({
-        model: env.OPENAI_MODEL,
-        max_output_tokens: 260,
-        instructions:
-          'You are an AI assistant inside the ERT shared apartment app. ' +
-          'Respond in short, natural Hebrew. ' +
-          'Do not return JSON. ' +
-          'Answer based only on the provided site context. ' +
-          'If the user asked to change data in the app but details are missing, ask one short clarification question. ' +
-          'If the user asked about existing data, answer directly and clearly.',
-        input: [
-          `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
-          pendingFollowUp
-            ? `Pending clarification:\nOriginal user request: ${pendingFollowUp.originalMessage}\nAssistant follow-up question: ${pendingFollowUp.latestAssistantQuestion}\nLatest user continuation: ${body.message}`
-            : '',
-          history ? `Conversation history:\n${history}` : '',
-          `User message: ${body.message}`,
-        ]
-          .filter(Boolean)
-          .join('\n\n'),
-      })
-
-      const fallbackReply = extractResponseText(fallbackResponse).trim()
-      if (fallbackReply) {
-        agentOutput = {
-          ...agentOutput,
-          reply: fallbackReply,
-        }
       }
     }
 
