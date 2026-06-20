@@ -136,25 +136,6 @@ export function ExpensesPage() {
 
   const monthlyTotal = scopedExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
   const filteredTotal = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
-  const averageExpense = scopedExpenses.length > 0 ? monthlyTotal / scopedExpenses.length : 0
-
-  const totalsByUser = scopedExpenses.reduce<Record<number, number>>(
-    (totals, expense) => ({
-      ...totals,
-      [expense.paid_by]: (totals[expense.paid_by] ?? 0) + Number(expense.amount),
-    }),
-    {},
-  )
-
-  const [topPayerId, topPayerTotal] =
-    Object.entries(totalsByUser).sort((a, b) => Number(b[1]) - Number(a[1]))[0] ?? []
-  const topPayer =
-    topPayerId && topPayerTotal
-      ? {
-          name: userNameById.get(Number(topPayerId)) ?? 'לא ידוע',
-          total: Number(topPayerTotal),
-        }
-      : null
 
   function updateForm(field: keyof ExpenseFormState, value: string | number[]) {
     setForm((currentForm) => ({ ...currentForm, [field]: value }))
@@ -360,17 +341,6 @@ export function ExpensesPage() {
           </p>
         </Card>
 
-        <div className="expenses-summary__grid">
-          <Card>
-            <p className="expenses-mini-stat__label">ממוצע להוצאה</p>
-            <p className="expenses-mini-stat__value">{formatCurrency(averageExpense)}</p>
-          </Card>
-          <Card>
-            <p className="expenses-mini-stat__label">שילם הכי הרבה</p>
-            <p className="expenses-mini-stat__value">{topPayer?.name ?? 'אין נתונים'}</p>
-            {topPayer ? <p className="expenses-mini-stat__hint">{formatCurrency(topPayer.total)}</p> : null}
-          </Card>
-        </div>
       </section>
 
       <Card title="רשימת הוצאות">
@@ -557,7 +527,6 @@ export function ExpensesPage() {
                     multiple
                     onChange={(event) => void onAttachmentChange(event)}
                   />
-                  <span>הוספת מסמך</span>
                 </label>
               </div>
 

@@ -34,7 +34,7 @@ export function AuthShell({
 
         <section className="auth-card card">
           <header className="auth-card__header">
-            <span className="auth-card__logo">ERT</span>
+            <img className="auth-card__logo" src="/logo.png" alt="ERT" />
             <h2 className="auth-card__title">{title}</h2>
             <p className="auth-card__sub">{subtitle}</p>
           </header>

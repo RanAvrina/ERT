@@ -1104,17 +1104,11 @@ input {
 }
 
 .auth-card__logo {
-  display: inline-flex;
-  width: 58px;
-  height: 58px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 20px;
-  background: linear-gradient(135deg, #2ec4b6 0%, #24b4a7 100%);
-  color: #fff;
-  font-weight: 800;
+  display: inline-block;
+  width: min(112px, 28vw);
+  height: auto;
   margin-bottom: 16px;
-  box-shadow: 0 14px 28px rgba(46, 196, 182, 0.22);
+  filter: drop-shadow(0 14px 28px rgba(46, 196, 182, 0.18));
 }
 
 .auth-card__title {
@@ -2202,6 +2196,41 @@ input {
   color: var(--color-text-secondary);
   font-size: 0.76rem;
   white-space: nowrap;
+}
+
+@media (max-width: 719px) {
+  .expenses-summary__main {
+    min-width: 0;
+  }
+
+  .expenses-summary__label,
+  .expenses-summary__hint {
+    font-size: 0.84rem;
+  }
+
+  .expenses-summary__amount {
+    font-size: clamp(2rem, 13vw, 2.9rem);
+    line-height: 0.95;
+    overflow-wrap: anywhere;
+  }
+
+  .expenses-filters--inline {
+    grid-template-columns: 1fr;
+  }
+
+  .expense-item-card__button {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .expense-item-card__side {
+    align-items: flex-start;
+  }
+
+  .expense-item-card__share {
+    white-space: normal;
+  }
 }
 
 .expenses-empty {
