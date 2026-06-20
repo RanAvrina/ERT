@@ -488,9 +488,15 @@ export function LoginPage() {
       subtitle="התחברו כדי לחזור לדירה שלכם"
       hideIntro
       footer={
-        <p className="auth-card__footer-text">
-          אין לך חשבון? <Link to={appRoutes.register} className="link">הרשמה</Link>
-        </p>
+        <div className="auth-card__footer-text">
+          <p>
+            אין לך חשבון? <Link to={appRoutes.register} className="link">הרשמה</Link>
+          </p>
+          <p>
+            רוצה לפתוח דירה חדשה?{' '}
+            <Link to={appRoutes.createApartment} className="link">פתיחת דירה חדשה</Link>
+          </p>
+        </div>
       }
     >
       <form className="form-stack" onSubmit={onSubmit} noValidate aria-busy={isSubmitting}>
