@@ -18,6 +18,11 @@ import {
   getPendingAgentFollowUp,
   storePendingAgentFollowUp,
 } from '../services/agent-followup-service.js'
+import {
+  inferLocalReadToolRequest,
+  normalizeAgentMessage as normalizeAgentMessageInput,
+  resolveLocalWriteAction,
+} from '../services/agent-local-resolver.js'
 
 export const agentRouter = Router()
 
@@ -868,6 +873,18 @@ function inferHeuristicReadToolRequest(
   }
 
   if (
+    normalizedMessage.includes('למה חייבים לי') ||
+    normalizedMessage.includes('למה חייב לי') ||
+    normalizedMessage.includes('ממה נובע החוב אליי') ||
+    normalizedMessage.includes('איזה הוצאות יצרו את החוב אליי')
+  ) {
+    return {
+      name: 'get_expenses' as const,
+      args: { scope: 'mine', limit: 12 },
+    }
+  }
+
+  if (
     normalizedMessage.includes('כמה אני חייב') ||
     normalizedMessage.includes('כמה חייבים לי') ||
     normalizedMessage.includes('מי חייב לי') ||
@@ -1479,6 +1496,10 @@ function getDeterministicDebtReply(message: string, context: AgentContext) {
     normalizedMessage.includes('למה חייבים לי') ||
     normalizedMessage.includes('למה חייב לי') ||
     normalizedMessage.includes('על מה חייבים לי')
+  const asksWhyOthersOweUser =
+    normalizedMessage.includes('למה חייבים לי') ||
+    normalizedMessage.includes('למה חייב לי') ||
+    normalizedMessage.includes('על מה חייבים לי')
 
   const namedRoommate = findRoommateByName(normalizedMessage, context)
   const asksWhoOwesUser =
@@ -1561,6 +1582,34 @@ function getDeterministicDebtReply(message: string, context: AgentContext) {
     }
     const drivers = buildDebtDriversSummary(context, 'owed_to_user')
     const parts = [summary]
+
+    if (drivers?.expensesText) {
+      parts.push(`ההוצאות שיצרו את היתרה הנוכחית:\n${drivers.expensesText}`)
+    }
+    if (drivers?.paymentsText) {
+      parts.push(`תשלומים שכבר נרשמו והפחיתו את החוב:\n${drivers.paymentsText}`)
+    }
+
+    return parts.join('\n\n')
+  }
+
+  if (asksWhyOthersOweUser) {
+    const settlements = context.balanceSummary.settlements.filter(
+      (item) => item.payeeAccountId === currentUser.id,
+    )
+    const totalOwed = settlements.reduce((sum, item) => sum + item.amount, 0)
+
+    if (settlements.length === 0 || totalOwed <= 0.005) {
+      return HE.nobodyOwesMe
+    }
+
+    const details = settlements
+      .map((item) => `${item.payerName} ${formatCurrency(item.amount)}`)
+      .join(', ')
+    const parts = [
+      `לפי החישוב במערכת, כרגע חייבים לך בסך הכול ${formatCurrency(totalOwed)}. ${details}.`,
+    ]
+    const drivers = buildDebtDriversSummary(context, 'owed_to_user')
 
     if (drivers?.expensesText) {
       parts.push(`ההוצאות שיצרו את היתרה הנוכחית:\n${drivers.expensesText}`)
@@ -2001,7 +2050,7 @@ agentRouter.post('/', async (request, response, next) => {
     const body = validateBody(queryBodySchema, request.body)
     const apartmentId = requireActiveApartment(request)
     const accountId = request.auth!.account.id
-    const normalizedUserMessage = normalizeAgentMessage(body.message)
+    const normalizedUserMessage = normalizeAgentMessageInput(body.message)
     logAgentEvent('request_start', {
       accountId,
       apartmentId,
@@ -2029,38 +2078,105 @@ agentRouter.post('/', async (request, response, next) => {
       return
     }
 
-    const directActionOutput = parseDirectAgentAction(normalizedUserMessage)
-    const directValidatedAction = directActionOutput?.action
-      ? validateAgentAction(directActionOutput.action)
+    const localWriteOutput = resolveLocalWriteAction(normalizedUserMessage, context)
+    const localValidatedAction = localWriteOutput?.action
+      ? validateAgentAction(localWriteOutput.action)
       : null
 
-    if (directValidatedAction) {
+    if (localValidatedAction) {
       const pendingAction = createPendingAgentAction({
         accountId,
         apartmentId,
-        action: directValidatedAction,
+        action: localValidatedAction,
       })
 
       clearPendingAgentFollowUp(accountId, apartmentId)
       response.json({
         reply:
-          directActionOutput?.reply?.trim() ||
+          localWriteOutput?.reply?.trim() ||
           `זיהיתי פעולה מוצעת: ${pendingAction.summary}. לאשר?`,
         pendingAction,
       })
       return
     }
 
-    const client = new OpenAI({ apiKey: env.OPENAI_API_KEY })
+    const deterministicReply =
+      deterministicDebtReply ||
+      deterministicOperationsReply ||
+      deterministicApartmentInfoReply ||
+      deterministicExpenseSummaryReply ||
+      deterministicTodayReply
+
+    if (deterministicReply) {
+      clearPendingAgentFollowUp(accountId, apartmentId)
+      response.json({
+        reply: deterministicReply,
+        pendingAction: null,
+      })
+      return
+    }
+
     const history = (body.history ?? [])
       .slice(-8)
       .map((item) => `${item.role === 'user' ? 'User' : 'Assistant'}: ${item.content}`)
       .join('\n')
+    const localReadToolRequest = inferLocalReadToolRequest(
+      pendingFollowUp?.originalMessage
+        ? `${normalizeAgentMessageInput(pendingFollowUp.originalMessage)} ${normalizedUserMessage}`
+        : normalizedUserMessage,
+      context,
+      [pendingFollowUp?.originalMessage ?? '', history, normalizedUserMessage]
+        .filter(Boolean)
+        .join(' '),
+    )
+    logAgentEvent('local_read_tool_result', {
+      accountId,
+      apartmentId,
+      message: truncateForLog(body.message),
+      localReadTool: localReadToolRequest?.name ?? null,
+    })
+
+    const client = new OpenAI({ apiKey: env.OPENAI_API_KEY })
     const openAIContext = buildScopedOpenAIContext(
       context,
       normalizedUserMessage,
       pendingFollowUp?.originalMessage,
     )
+
+    if (localReadToolRequest) {
+      const toolData = executeReadTool(
+        context,
+        localReadToolRequest.name,
+        localReadToolRequest.args,
+      )
+      const llmToolReply = await buildNaturalToolReply(
+        client,
+        env.OPENAI_MODEL,
+        body.message,
+        history,
+        localReadToolRequest.name,
+        toolData,
+      )
+      const toolReply =
+        llmToolReply ||
+        buildToolReplyFallback(localReadToolRequest.name, toolData, context, body.message)
+      logAgentEvent('local_read_tool_reply', {
+        accountId,
+        apartmentId,
+        tool: localReadToolRequest.name,
+        hasToolReply: Boolean(toolReply),
+        toolReply: truncateForLog(toolReply ?? '', 220),
+      })
+
+      if (toolReply) {
+        clearPendingAgentFollowUp(accountId, apartmentId)
+        response.json({
+          reply: toolReply,
+          pendingAction: null,
+        })
+        return
+      }
+    }
 
     const plannerResponse = await client.responses.create({
       model: env.OPENAI_MODEL,
@@ -2218,72 +2334,6 @@ agentRouter.post('/', async (request, response, next) => {
       return
     }
 
-    const heuristicToolRequest = inferHeuristicReadToolRequest(
-      pendingFollowUp?.originalMessage
-        ? `${normalizeAgentMessage(pendingFollowUp.originalMessage)} ${normalizedUserMessage}`
-        : normalizedUserMessage,
-      context,
-      [
-        pendingFollowUp?.originalMessage ?? '',
-        history,
-        normalizedUserMessage,
-      ]
-        .filter(Boolean)
-        .join(' '),
-    )
-    logAgentEvent('heuristic_tool_result', {
-      accountId,
-      apartmentId,
-      message: truncateForLog(body.message),
-      heuristicTool: heuristicToolRequest?.name ?? null,
-    })
-
-    if (heuristicToolRequest) {
-      const toolData = executeReadTool(context, heuristicToolRequest.name, heuristicToolRequest.args)
-      const llmToolReply = await buildNaturalToolReply(
-        client,
-        env.OPENAI_MODEL,
-        body.message,
-        history,
-        heuristicToolRequest.name,
-        toolData,
-      )
-      const toolReply =
-        llmToolReply || buildToolReplyFallback(heuristicToolRequest.name, toolData, context, body.message)
-      logAgentEvent('heuristic_tool_reply', {
-        accountId,
-        apartmentId,
-        tool: heuristicToolRequest.name,
-        hasToolReply: Boolean(toolReply),
-        toolReply: truncateForLog(toolReply ?? '', 220),
-      })
-
-      if (toolReply) {
-        clearPendingAgentFollowUp(accountId, apartmentId)
-        response.json({
-          reply: toolReply,
-          pendingAction: null,
-        })
-        return
-      }
-    }
-
-    const deterministicReply =
-      deterministicDebtReply ||
-      deterministicOperationsReply ||
-      deterministicApartmentInfoReply ||
-      deterministicExpenseSummaryReply ||
-      deterministicTodayReply
-
-    if (deterministicReply) {
-      clearPendingAgentFollowUp(accountId, apartmentId)
-      response.json({
-        reply: deterministicReply,
-        pendingAction: null,
-      })
-      return
-    }
-
     const aiResponse = await client.responses.create({
       model: env.OPENAI_MODEL,
       max_output_tokens: 420,
@@ -2303,6 +2353,7 @@ agentRouter.post('/', async (request, response, next) => {
         'update_task_due_date {taskId, taskTitle, dueDate}; ' +
         'update_task_status {taskId, taskTitle, status}; ' +
         'create_expense {description, amount, category, date, paidByName, participantNames}; ' +
+        'create_payment {payerName, payeeName, amount, paymentDate, note}; ' +
         'create_shopping_item {itemName, quantity, category}; ' +
         'cancel_shopping_items {itemName, mode}; ' +
         'create_ticket {title, description, category}. ' +
@@ -2310,6 +2361,7 @@ agentRouter.post('/', async (request, response, next) => {
         'For "תבטל הכל" or "תמחק את כל..." return mode "all_matching". For a single item return mode "single_latest". ' +
         'When the user specifies who shares an expense, include those roommate names in create_expense.participantNames. ' +
         'If the user says the expense is split equally only between specific people, do not include other roommates. ' +
+        'If the user describes money transfer between roommates such as "דוד שילם לי 500", "שילמתי לדוד", or "תרשום תשלום", use create_payment and not create_expense. ' +
         'Examples: "אני ויוני", "ביני לבין יוני", "רק אני ויוני", "אני, יוני ודוד" should map to exactly those participants. ' +
         'Allowed status values: open, in_progress, done, cancelled. ' +
         'Allowed taskType values: cleaning, maintenance, shopping, inspection, other. ' +
@@ -2358,6 +2410,7 @@ agentRouter.post('/', async (request, response, next) => {
           'update_task_due_date {taskId, taskTitle, dueDate}; ' +
           'update_task_status {taskId, taskTitle, status}; ' +
           'create_expense {description, amount, category, date, paidByName, participantNames}; ' +
+          'create_payment {payerName, payeeName, amount, paymentDate, note}; ' +
           'create_shopping_item {itemName, quantity, category}; ' +
           'cancel_shopping_items {itemName, mode}; ' +
           'create_ticket {title, description, category}.',

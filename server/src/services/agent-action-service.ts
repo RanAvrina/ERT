@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { ApiError } from '../lib/api-error.js'
 import { getApartmentStateSnapshot } from './apartment-service.js'
-import { createExpense } from './finance-service.js'
+import { createExpense, createPayment } from './finance-service.js'
 import {
   createShoppingItem,
   listShoppingItemsByApartmentId,
@@ -69,6 +69,17 @@ const createExpenseActionSchema = z.object({
   }),
 })
 
+const createPaymentActionSchema = z.object({
+  type: z.literal('create_payment'),
+  payload: z.object({
+    payerName: z.string().trim().min(1),
+    payeeName: z.string().trim().optional().nullable(),
+    amount: z.coerce.number().positive(),
+    paymentDate: z.string().trim().optional().nullable(),
+    note: z.string().trim().optional().nullable(),
+  }),
+})
+
 const createShoppingItemActionSchema = z.object({
   type: z.literal('create_shopping_item'),
   payload: z.object({
@@ -100,6 +111,7 @@ const agentActionSchema = z.discriminatedUnion('type', [
   updateTaskDueDateActionSchema,
   updateTaskStatusActionSchema,
   createExpenseActionSchema,
+  createPaymentActionSchema,
   createShoppingItemActionSchema,
   cancelShoppingItemsActionSchema,
   createTicketActionSchema,
@@ -166,6 +178,8 @@ function buildPendingActionSummary(action: AgentAction) {
           ? ` (${action.payload.participantNames.join(', ')})`
           : ''
       }`
+    case 'create_payment':
+      return `רישום תשלום: ${action.payload.payerName} -> ${action.payload.payeeName ?? 'אליי'}`
     case 'create_shopping_item':
       return `הוספת פריט קניות: ${action.payload.itemName}`
     case 'cancel_shopping_items':
@@ -324,7 +338,7 @@ export function createPendingAgentAction(input: {
   return {
     token,
     type: input.action.type,
-    summary: buildPendingActionSummary(input.action),
+    summary: buildPendingActionSummary(input.action) ?? input.action.type,
     expiresAt: new Date(Date.now() + PENDING_ACTION_TTL_MS).toISOString(),
   }
 }
@@ -433,6 +447,34 @@ export async function confirmPendingAgentAction(input: {
         participantAccountIds,
       })
       message = 'ההוצאה נוספה בהצלחה.'
+      break
+    }
+
+    case 'create_payment': {
+      const actorAccountId = await requireResidentActorAccountId(
+        input.apartmentId,
+        input.accountId,
+        'Payment creation',
+      )
+      const payerAccountId = await findAccountIdByName(input.apartmentId, action.payload.payerName)
+      if (!payerAccountId) {
+        throw new ApiError(400, 'Missing payer for payment creation.')
+      }
+      const resolvedPayeeAccountId =
+        (await findAccountIdByName(input.apartmentId, action.payload.payeeName ?? null)) ??
+        actorAccountId
+      if (!resolvedPayeeAccountId) {
+        throw new ApiError(400, 'Missing payee for payment creation.')
+      }
+      await createPayment({
+        apartmentId: input.apartmentId,
+        payerAccountId,
+        payeeAccountId: resolvedPayeeAccountId,
+        amount: action.payload.amount.toFixed(2),
+        paymentDate: normalizeDate(action.payload.paymentDate ?? null),
+        note: action.payload.note?.trim() || null,
+      })
+      message = 'התשלום נרשם בהצלחה.'
       break
     }
 
