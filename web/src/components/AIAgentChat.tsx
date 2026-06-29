@@ -119,6 +119,9 @@ export function AIAgentChat() {
       setMessages((currentMessages) => [
         ...currentMessages,
         { role: 'assistant', content: compactText(result.message, 'הפעולה בוצעה.') },
+        ...(result.followUpReply
+          ? [{ role: 'assistant' as const, content: compactText(result.followUpReply) }]
+          : []),
       ])
     } catch (requestError) {
       const messageText =

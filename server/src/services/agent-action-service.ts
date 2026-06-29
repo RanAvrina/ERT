@@ -8,12 +8,13 @@ import {
   listShoppingItemsByApartmentId,
   updateShoppingItem,
 } from './shopping-service.js'
-import { createTask, listTasksByApartmentId, updateTask } from './task-service.js'
-import { createTicket } from './ticket-service.js'
+import { createTask, deleteTask, listTasksByApartmentId, updateTask } from './task-service.js'
+import { createTicket, listTicketsByApartmentId, updateTicketStatus } from './ticket-service.js'
 
 const taskTypeSchema = z.enum(['cleaning', 'maintenance', 'shopping', 'inspection', 'other'])
 const taskStatusSchema = z.enum(['open', 'in_progress', 'done', 'cancelled'])
 const ticketCategorySchema = z.enum(['issue', 'request', 'finance', 'other'])
+const ticketStatusSchema = z.enum(['open', 'in_progress', 'closed'])
 
 const createTaskActionSchema = z
   .object({
@@ -57,6 +58,18 @@ const updateTaskStatusActionSchema = z
     message: 'Task status update must include taskId or taskTitle.',
   })
 
+const deleteTaskActionSchema = z
+  .object({
+    type: z.literal('delete_task'),
+    payload: z.object({
+      taskId: z.number().int().positive().optional(),
+      taskTitle: z.string().trim().min(1).optional(),
+    }),
+  })
+  .refine((value) => Boolean(value.payload.taskId || value.payload.taskTitle), {
+    message: 'Task delete must include taskId or taskTitle.',
+  })
+
 const createExpenseActionSchema = z.object({
   type: z.literal('create_expense'),
   payload: z.object({
@@ -97,6 +110,15 @@ const cancelShoppingItemsActionSchema = z.object({
   }),
 })
 
+const markShoppingItemsPurchasedActionSchema = z.object({
+  type: z.literal('mark_shopping_items_purchased'),
+  payload: z.object({
+    itemName: z.string().trim().min(1),
+    mode: z.enum(['single_latest', 'all_matching']).optional().default('single_latest'),
+    purchasedByName: z.string().trim().optional().nullable(),
+  }),
+})
+
 const createTicketActionSchema = z.object({
   type: z.literal('create_ticket'),
   payload: z.object({
@@ -106,15 +128,31 @@ const createTicketActionSchema = z.object({
   }),
 })
 
+const updateTicketStatusActionSchema = z
+  .object({
+    type: z.literal('update_ticket_status'),
+    payload: z.object({
+      ticketId: z.number().int().positive().optional(),
+      ticketTitle: z.string().trim().min(1).optional(),
+      status: ticketStatusSchema,
+    }),
+  })
+  .refine((value) => Boolean(value.payload.ticketId || value.payload.ticketTitle), {
+    message: 'Ticket status update must include ticketId or ticketTitle.',
+  })
+
 const agentActionSchema = z.discriminatedUnion('type', [
   createTaskActionSchema,
   updateTaskDueDateActionSchema,
   updateTaskStatusActionSchema,
+  deleteTaskActionSchema,
   createExpenseActionSchema,
   createPaymentActionSchema,
   createShoppingItemActionSchema,
   cancelShoppingItemsActionSchema,
+  markShoppingItemsPurchasedActionSchema,
   createTicketActionSchema,
+  updateTicketStatusActionSchema,
 ])
 
 type AgentAction = z.infer<typeof agentActionSchema>
@@ -172,6 +210,8 @@ function buildPendingActionSummary(action: AgentAction) {
       return `עדכון תאריך למטלה: ${action.payload.taskTitle ?? `#${action.payload.taskId}`}`
     case 'update_task_status':
       return `עדכון סטטוס למטלה: ${action.payload.taskTitle ?? `#${action.payload.taskId}`}`
+    case 'delete_task':
+      return `מחיקת מטלה: ${action.payload.taskTitle ?? `#${action.payload.taskId}`}`
     case 'create_expense':
       return `הוספת הוצאה: ${action.payload.description}${
         action.payload.participantNames?.length
@@ -313,6 +353,53 @@ async function findShoppingItemsForAction(
   return mode === 'all_matching' ? matchingItems : [matchingItems[0]]
 }
 
+async function findTicketForAction(apartmentId: number, ticketId?: number, ticketTitle?: string) {
+  const tickets = await listTicketsByApartmentId(apartmentId)
+  if (ticketId) {
+    const ticket = tickets.find((candidate) => candidate.id === ticketId)
+    if (!ticket) throw new ApiError(404, 'הפנייה לא נמצאה.')
+    return ticket
+  }
+
+  const normalizedTitle = ticketTitle?.trim()
+  if (!normalizedTitle) throw new ApiError(400, 'חסר מזהה פנייה לעדכון.')
+
+  const exactMatch = tickets.find((ticket) => ticket.title === normalizedTitle)
+  if (exactMatch) return exactMatch
+
+  const partialMatches = tickets.filter((ticket) => ticket.title.includes(normalizedTitle))
+  if (!partialMatches.length) {
+    throw new ApiError(404, 'הפנייה לא נמצאה.')
+  }
+  if (partialMatches.length > 1) {
+    throw new ApiError(409, `יש יותר מפנייה אחת שמתאימה ל-"${normalizedTitle}".`)
+  }
+  return partialMatches[0]
+}
+
+async function getActorRoleByAccountId(apartmentId: number, accountId: number) {
+  const state = await getApartmentStateSnapshot(apartmentId)
+  const actor = state.users.find((user) => user.id === accountId && user.status === 'active')
+  if (!actor) {
+    throw new ApiError(403, 'לא נמצא משתמש פעיל בדירה עבור הפעולה הזו.')
+  }
+  return actor.role
+}
+
+function buildPendingActionSummarySafe(action: AgentAction) {
+  if (action.type === 'mark_shopping_items_purchased') {
+    return action.payload.mode === 'all_matching'
+      ? `סימון כל פריטי הקנייה של ${action.payload.itemName} כנקנו`
+      : `סימון פריט הקנייה ${action.payload.itemName} כנקנה`
+  }
+
+  if (action.type === 'update_ticket_status') {
+    return `עדכון סטטוס לפנייה: ${action.payload.ticketTitle ?? `#${action.payload.ticketId}`}`
+  }
+
+  return buildPendingActionSummary(action)
+}
+
 export function validateAgentAction(value: unknown) {
   const normalizedValue = normalizeAgentActionValue(value)
   if (!normalizedValue) return null
@@ -338,7 +425,7 @@ export function createPendingAgentAction(input: {
   return {
     token,
     type: input.action.type,
-    summary: buildPendingActionSummary(input.action) ?? input.action.type,
+    summary: buildPendingActionSummarySafe(input.action) ?? input.action.type,
     expiresAt: new Date(Date.now() + PENDING_ACTION_TTL_MS).toISOString(),
   }
 }
@@ -421,6 +508,18 @@ export async function confirmPendingAgentAction(input: {
         status: action.payload.status,
       })
       message = `הסטטוס של "${task.title}" עודכן.`
+      break
+    }
+
+    case 'delete_task': {
+      await requireResidentActorAccountId(input.apartmentId, input.accountId, 'Task delete')
+      const task = await findTaskForAction(
+        input.apartmentId,
+        action.payload.taskId,
+        action.payload.taskTitle,
+      )
+      await deleteTask(input.apartmentId, task.id)
+      message = `המטלה "${task.title}" נמחקה.`
       break
     }
 
@@ -529,6 +628,42 @@ export async function confirmPendingAgentAction(input: {
       break
     }
 
+    case 'mark_shopping_items_purchased': {
+      const actorAccountId = await requireResidentActorAccountId(
+        input.apartmentId,
+        input.accountId,
+        'Shopping updates',
+      )
+      const purchasedByAccountId =
+        (await findAccountIdByName(input.apartmentId, action.payload.purchasedByName ?? null)) ??
+        actorAccountId
+      const matchingItems = await findShoppingItemsForAction(
+        input.apartmentId,
+        action.payload.itemName,
+        action.payload.mode ?? 'single_latest',
+      )
+
+      for (const item of matchingItems) {
+        await updateShoppingItem({
+          apartmentId: input.apartmentId,
+          itemId: item.id,
+          actorAccountId,
+          itemName: item.itemName,
+          quantity: item.quantity,
+          category: item.category,
+          status: 'purchased',
+          purchasedByAccountId,
+          purchasedAt: new Date().toISOString(),
+        })
+      }
+
+      message =
+        matchingItems.length === 1
+          ? `פריט הקניות "${matchingItems[0].itemName}" סומן כנקנה.`
+          : `${matchingItems.length} פריטי קנייה של "${action.payload.itemName.trim()}" סומנו כנקנו.`
+      break
+    }
+
     case 'create_ticket': {
       await createTicket({
         apartmentId: input.apartmentId,
@@ -540,6 +675,22 @@ export async function confirmPendingAgentAction(input: {
       message = `נפתחה פנייה חדשה: ${action.payload.title.trim()}.`
       break
     }
+    case 'update_ticket_status': {
+      const actorRole = await getActorRoleByAccountId(input.apartmentId, input.accountId)
+      const ticket = await findTicketForAction(
+        input.apartmentId,
+        action.payload.ticketId,
+        action.payload.ticketTitle,
+      )
+      await updateTicketStatus({
+        apartmentId: input.apartmentId,
+        ticketId: ticket.id,
+        actorRole,
+        status: action.payload.status,
+      })
+      message = `הסטטוס של הפנייה "${ticket.title}" עודכן.`
+      break
+    }
   }
 
   pendingAgentActions.delete(input.token)
@@ -547,5 +698,6 @@ export async function confirmPendingAgentAction(input: {
     ok: true,
     message,
     apartmentId: input.apartmentId,
+    actionType: action.type,
   }
 }

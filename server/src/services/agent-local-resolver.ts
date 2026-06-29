@@ -359,6 +359,53 @@ function parseContextualCancelShoppingAction(message: string): LocalWriteResolut
   }
 }
 
+function parseContextualMarkShoppingPurchasedAction(
+  message: string,
+  context: AgentLocalResolverContext,
+): LocalWriteResolution | null {
+  const normalizedMessage = normalizeText(message)
+  const looksLikePurchasedAction = includesAny(normalizedMessage, [
+    'קניתי',
+    'נקנה',
+    'נקנתה',
+    'נקנו',
+    'סמן כנקנה',
+    'תסמן כנקנה',
+    'סמן כנרכש',
+    'תסמן כנרכש',
+  ])
+
+  if (!looksLikePurchasedAction) return null
+
+  const shoppingNames = [...new Set(context.shoppingItems.map((item) => normalizeText(item.name)))]
+    .sort((left, right) => right.length - left.length)
+
+  const matchedItemName = shoppingNames.find(
+    (itemName) =>
+      normalizedMessage.includes(itemName) ||
+      normalizedMessage.includes(`את ${itemName}`) ||
+      normalizedMessage.includes(`ה${itemName}`),
+  )
+
+  if (!matchedItemName) return null
+
+  const purchasedByName =
+    extractMentionedRoommateNames(message, context)[0] ??
+    inferCurrentUserName(context)
+
+  return {
+    reply: `זיהיתי בקשה לסמן את פריט הקניות ${matchedItemName} כנקנה. לאשר?`,
+    action: {
+      type: 'mark_shopping_items_purchased',
+      payload: {
+        itemName: matchedItemName,
+        mode: includesAny(normalizedMessage, ['הכל', 'כל']) ? 'all_matching' : 'single_latest',
+        purchasedByName,
+      },
+    },
+  }
+}
+
 function parseContextualTaskStatusAction(
   message: string,
   context: AgentLocalResolverContext,
@@ -387,6 +434,31 @@ function parseContextualTaskStatusAction(
       payload: {
         taskTitle,
         status,
+      },
+    },
+  }
+}
+
+function parseContextualDeleteTaskAction(
+  message: string,
+  context: AgentLocalResolverContext,
+): LocalWriteResolution | null {
+  const normalizedMessage = normalizeText(message)
+  const looksLikeDeleteTaskAction =
+    includesAny(normalizedMessage, ['מחק', 'תמחק', 'תסיר', 'תוריד', 'תבטל']) &&
+    includesAny(normalizedMessage, ['מטלה', 'משימה'])
+
+  if (!looksLikeDeleteTaskAction) return null
+
+  const taskTitle = extractFirstMatchingTaskTitle(message, context)
+  if (!taskTitle) return null
+
+  return {
+    reply: `זיהיתי בקשה למחוק את המטלה ${taskTitle}. לאשר?`,
+    action: {
+      type: 'delete_task',
+      payload: {
+        taskTitle,
       },
     },
   }
@@ -491,6 +563,56 @@ function parseContextualTicketAction(message: string): LocalWriteResolution | nu
   }
 }
 
+function parseContextualTicketStatusAction(
+  message: string,
+  context: AgentLocalResolverContext,
+): LocalWriteResolution | null {
+  const normalizedMessage = normalizeText(message)
+  const looksLikeTicketStatusAction = includesAny(normalizedMessage, [
+    'פנייה',
+    'תקלה',
+    'בקשה',
+  ]) &&
+    includesAny(normalizedMessage, [
+      'סגור',
+      'סגורה',
+      'נסגרה',
+      'בטיפול',
+      'טיפול',
+      'פתוחה',
+      'תפתח מחדש',
+    ])
+
+  if (!looksLikeTicketStatusAction) return null
+
+  const matchedTicket = [...context.tickets]
+    .sort((left, right) => right.title.length - left.title.length)
+    .find((ticket) => normalizedMessage.includes(normalizeText(ticket.title)))
+
+  if (!matchedTicket) return null
+
+  const status = includesAny(normalizedMessage, ['סגור', 'סגורה', 'נסגרה'])
+    ? 'closed'
+    : includesAny(normalizedMessage, ['בטיפול', 'טיפול'])
+      ? 'in_progress'
+      : includesAny(normalizedMessage, ['פתוחה', 'תפתח מחדש'])
+        ? 'open'
+        : null
+
+  if (!status) return null
+
+  return {
+    reply: `זיהיתי בקשה לעדכן את סטטוס הפנייה ${matchedTicket.title}. לאשר?`,
+    action: {
+      type: 'update_ticket_status',
+      payload: {
+        ticketTitle: matchedTicket.title,
+        status,
+      },
+    },
+  }
+}
+
 export function resolveLocalWriteAction(
   message: string,
   context: AgentLocalResolverContext,
@@ -502,11 +624,14 @@ export function resolveLocalWriteAction(
     parseDirectShoppingAction(normalizedMessage) ??
     parseContextualShoppingAction(normalizedMessage) ??
     parseContextualCancelShoppingAction(normalizedMessage) ??
+    parseContextualMarkShoppingPurchasedAction(normalizedMessage, context) ??
     parseContextualExpenseAction(normalizedMessage, context) ??
     parseDirectExpenseAction(normalizedMessage) ??
     parseContextualTaskStatusAction(normalizedMessage, context) ??
+    parseContextualDeleteTaskAction(normalizedMessage, context) ??
     parseContextualTaskDueDateAction(normalizedMessage, context) ??
     parseContextualTaskAction(normalizedMessage, context) ??
+    parseContextualTicketStatusAction(normalizedMessage, context) ??
     parseContextualTicketAction(normalizedMessage)
   )
 }

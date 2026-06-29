@@ -21,6 +21,8 @@ export interface AgentConfirmResult {
   ok: boolean
   message: string
   apartmentId: number
+  actionType: string
+  followUpReply?: string | null
 }
 
 export async function queryAgentViaApi(input: {

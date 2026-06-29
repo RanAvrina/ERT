@@ -745,6 +745,93 @@ function buildScopedOpenAIContext(
   }
 }
 
+function buildConfirmFollowUpReply(
+  actionType: string,
+  context: AgentContext,
+  accountId: number,
+) {
+  const currentUser = context.user
+  const currentUserSettlementToPay = context.balanceSummary.settlements.filter(
+    (item) => item.payerAccountId === accountId,
+  )
+  const currentUserSettlementToReceive = context.balanceSummary.settlements.filter(
+    (item) => item.payeeAccountId === accountId,
+  )
+
+  switch (actionType) {
+    case 'create_payment': {
+      const totalToPay = currentUserSettlementToPay.reduce((sum, item) => sum + item.amount, 0)
+      const totalToReceive = currentUserSettlementToReceive.reduce((sum, item) => sum + item.amount, 0)
+
+      if (totalToReceive > 0.005) {
+        const topDebtors = currentUserSettlementToReceive
+          .slice(0, 2)
+          .map((item) => `${item.payerName} ${formatCurrency(item.amount)}`)
+          .join(', ')
+        return `היתרות עודכנו. כרגע עדיין חייבים לך ${formatCurrency(totalToReceive)}${topDebtors ? `: ${topDebtors}.` : '.'}`
+      }
+
+      if (totalToPay > 0.005) {
+        const topCreditors = currentUserSettlementToPay
+          .slice(0, 2)
+          .map((item) => `${item.payeeName} ${formatCurrency(item.amount)}`)
+          .join(', ')
+        return `היתרות עודכנו. כרגע אתה עדיין חייב ${formatCurrency(totalToPay)}${topCreditors ? `: ${topCreditors}.` : '.'}`
+      }
+
+      return currentUser
+        ? `היתרות עודכנו. כרגע ${currentUser.name} מאוזן מול שאר הדיירים.`
+        : 'היתרות עודכנו.'
+    }
+
+    case 'create_expense':
+      return `ההוצאה נשמרה והיתרות בדירה עודכנו. כרגע יש ${context.expenses.length} הוצאות פעילות במערכת.`
+
+    case 'create_shopping_item': {
+      const openItemsCount = context.shoppingItems.filter((item) => item.status === 'open').length
+      return `רשימת הקניות עודכנה. כרגע יש ${openItemsCount} פריטים פתוחים.`
+    }
+
+    case 'cancel_shopping_items': {
+      const openItemsCount = context.shoppingItems.filter((item) => item.status === 'open').length
+      return `רשימת הקניות עודכנה. נשארו ${openItemsCount} פריטים פתוחים.`
+    }
+
+    case 'mark_shopping_items_purchased': {
+      const openItemsCount = context.shoppingItems.filter((item) => item.status === 'open').length
+      return `רשימת הקניות עודכנה. כרגע נשארו ${openItemsCount} פריטים פתוחים.`
+    }
+
+    case 'create_task':
+    case 'update_task_due_date':
+    case 'update_task_status':
+    case 'delete_task': {
+      const myOpenTasks = currentUser
+        ? context.tasks.filter(
+            (task) =>
+              task.assigneeAccountId === currentUser.id &&
+              task.status !== 'done' &&
+              task.status !== 'cancelled',
+          ).length
+        : 0
+      return `המערכת עודכנה. כרגע יש לך ${myOpenTasks} מטלות פתוחות.`
+    }
+
+    case 'create_ticket': {
+      const openTickets = context.tickets.filter((ticket) => ticket.status === 'open').length
+      return `הפניות עודכנו. כרגע יש ${openTickets} פניות פתוחות.`
+    }
+
+    case 'update_ticket_status': {
+      const openTickets = context.tickets.filter((ticket) => ticket.status === 'open').length
+      return `הפניות עודכנו. כרגע יש ${openTickets} פניות פתוחות.`
+    }
+
+    default:
+      return null
+  }
+}
+
 function inferHeuristicReadToolRequest(
   message: string,
   context: AgentContext,
@@ -2352,11 +2439,14 @@ agentRouter.post('/', async (request, response, next) => {
         'create_task {title, taskType, targetItemName, description, assigneeName, dueDate}; ' +
         'update_task_due_date {taskId, taskTitle, dueDate}; ' +
         'update_task_status {taskId, taskTitle, status}; ' +
+        'delete_task {taskId, taskTitle}; ' +
         'create_expense {description, amount, category, date, paidByName, participantNames}; ' +
         'create_payment {payerName, payeeName, amount, paymentDate, note}; ' +
         'create_shopping_item {itemName, quantity, category}; ' +
         'cancel_shopping_items {itemName, mode}; ' +
-        'create_ticket {title, description, category}. ' +
+        'mark_shopping_items_purchased {itemName, mode, purchasedByName}; ' +
+        'create_ticket {title, description, category}; ' +
+        'update_ticket_status {ticketId, ticketTitle, status}. ' +
         'Use cancel_shopping_items when the user asks to remove, cancel, delete, or clear shopping items from the shopping list. ' +
         'For "תבטל הכל" or "תמחק את כל..." return mode "all_matching". For a single item return mode "single_latest". ' +
         'When the user specifies who shares an expense, include those roommate names in create_expense.participantNames. ' +
@@ -2409,11 +2499,14 @@ agentRouter.post('/', async (request, response, next) => {
           'create_task {title, taskType, targetItemName, description, assigneeName, dueDate}; ' +
           'update_task_due_date {taskId, taskTitle, dueDate}; ' +
           'update_task_status {taskId, taskTitle, status}; ' +
+          'delete_task {taskId, taskTitle}; ' +
           'create_expense {description, amount, category, date, paidByName, participantNames}; ' +
           'create_payment {payerName, payeeName, amount, paymentDate, note}; ' +
           'create_shopping_item {itemName, quantity, category}; ' +
           'cancel_shopping_items {itemName, mode}; ' +
-          'create_ticket {title, description, category}.',
+          'mark_shopping_items_purchased {itemName, mode, purchasedByName}; ' +
+          'create_ticket {title, description, category}; ' +
+          'update_ticket_status {ticketId, ticketTitle, status}.',
         input: [
           `Site context:\n${JSON.stringify(openAIContext, null, 2)}`,
           `Original user request: ${pendingFollowUp.originalMessage}`,
@@ -2536,7 +2629,17 @@ agentRouter.post('/confirm', async (request, response, next) => {
     })
     clearPendingAgentFollowUp(accountId, apartmentId)
 
-    response.json(result)
+    const refreshedContext = await buildAgentContext(apartmentId, accountId)
+    const followUpReply = buildConfirmFollowUpReply(
+      result.actionType,
+      refreshedContext,
+      accountId,
+    )
+
+    response.json({
+      ...result,
+      followUpReply,
+    })
   } catch (error) {
     next(error)
   }
